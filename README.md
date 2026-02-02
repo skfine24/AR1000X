@@ -19,7 +19,6 @@ PC와 USB(네이티브 CDC)로 연결되어 **시리얼 명령을 드론 제어 
 ### 주요 기능
 - 🎮 **물리 조이스틱 조종**
 - 💻 **PC 시리얼 명령 기반 제어 (Hub Mode)**
-- 🧠 dd3 스타일 이동 명령 지원
 - 🔐 ARM 기반 안전 게이트
 - ⏱ 200ms PC 통신 타임아웃 Fail-safe
 - 🚨 EMERGENCY 즉시 스로틀 컷
@@ -54,7 +53,7 @@ AF1000X는 **PC 명령을 직접 드론에 전달하지 않고**,
 ### 시리얼 명령
 자세한 명령어 목록은 아래 문서를 참고하세요.
 
-📄 **AF1000X_Serial_Command_Reference.md**
+📄 **AR1000X_Serial_Command_Reference.md**
 
 ---
 
