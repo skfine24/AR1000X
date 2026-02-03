@@ -12,7 +12,7 @@ It converts USB serial commands from a PC into RF control signals for the drone.
 - Designed for education, research, and automation
 
 ### Key Features
-1. Physical joystick control (Mode 2 default)
+1. Physical joystick control (Mode 1/2 supported, Mode 2 default)
 2. PC serial command control (Hub Mode)
 3. ARM safety gate + 200ms PC timeout failsafe
 4. Emergency throttle cut
@@ -64,7 +64,7 @@ Documents/Arduino/libraries/Adafruit_TinyUSB_Library
 5. Send `ARM 0` before disconnecting
 
 ### Contact
-This FC is developed by SYUBEA Co., Ltd. (Korea).  
+This controller is developed by SYUBEA Co., Ltd. (Korea).  
 For purchase inquiries, please contact `hello@1510.co.kr`.
 
 ---
@@ -80,7 +80,7 @@ PC의 USB 시리얼 명령을 RF 제어 신호로 변환해 드론에 전달합�
 - 교육/연구/자동화 목적에 적합
 
 ### 주요 기능
-1. 물리 조이스틱 조종 (기본 MODE 2)
+1. 물리 조이스틱 조종 (MODE 1/2 동시 지원, 기본 MODE 2)
 2. PC 시리얼 명령 제어 (Hub Mode)
 3. ARM 안전 게이트 + 200ms PC 통신 타임아웃 페일세이프
 4. EMERGENCY 즉시 스로틀 컷
@@ -133,7 +133,7 @@ Documents/Arduino/libraries/Adafruit_TinyUSB_Library
 5. 종료 전 `ARM 0` 전송
 
 ### 문의
-한국 주식회사 슈베아에서 개발한 FC이며,  
+한국 주식회사 슈베아에서 개발한 드론 조종기이며,  
 제품 구입 문의는 `hello@1510.co.kr` 로 연락 부탁드립니다.
 
 ---
@@ -149,7 +149,7 @@ PCのUSBシリアル命令をRF制御信号に変換してドローンへ送信�
 - 教育/研究/自動化用途に適合
 
 ### 主な機能
-1. 物理ジョイスティック操作（MODE 2が標準）
+1. 物理ジョイスティック操作（MODE 1/2対応、MODE 2が標準）
 2. PCシリアル命令による制御（Hub Mode）
 3. ARM安全ゲート + 200msタイムアウトフェイルセーフ
 4. EMERGENCY 即時スロットルカット
@@ -202,7 +202,7 @@ Documents/Arduino/libraries/Adafruit_TinyUSB_Library
 5. 切断前に `ARM 0` を送信
 
 ### お問い合わせ
-本FCは韓国のSYUBEA株式会社が開発しました。  
+本ドローンコントローラは韓国のSYUBEA株式会社が開発しました。  
 製品購入のお問い合わせは `hello@1510.co.kr` までご連絡ください。
 
 ---
