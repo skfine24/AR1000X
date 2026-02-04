@@ -8,6 +8,24 @@ EN: Baudrate = `115200`, Line ending = `\r` or `\n`, case-insensitive
 
 ---
 
+## KO: 0) 대상 드론 지정 | EN: Target Drone (D1~D4)
+
+KO: 명령 앞에 `D1`~`D4`를 붙이면 해당 드론에만 적용됩니다. 기본값은 `D1`.
+EN: Prefix commands with `D1`~`D4` to target a specific drone. Default is `D1`.
+
+**Format**
+```
+D1 <command>
+D2:<command>
+D3, <command>
+D4 <command>
+```
+
+KO: `:` 또는 `,` 는 선택입니다.
+EN: `:` or `,` is optional.
+
+---
+
 ## KO: 1) 제어/안전 | EN: Control/Safety
 
 | Command | KO | EN |
@@ -16,7 +34,7 @@ EN: Baudrate = `115200`, Line ending = `\r` or `\n`, case-insensitive
 | `ARM 0` | PC 제어 해제(스틱 우선) | Disable PC control (stick priority) |
 | `SRC PC` | PC 입력 강제 | Force PC input |
 | `SRC STICK` | 스틱 입력 강제 | Force stick input |
-| `EMERGENCY` | 즉시 모터 컷 + 전송 | Immediate throttle cut + transmit |
+| `EMERGENCY` | 즉시 모터 컷 + **D1~D4 전체 전송** | Immediate throttle cut + **broadcast to D1~D4** |
 | `STOP` | `EMERGENCY`와 동일 | Same as `EMERGENCY` |
 
 KO: PC 명령이 200ms 이상 없으면 스틱으로 자동 복귀
@@ -24,12 +42,28 @@ EN: If PC commands stop for >200ms, fallback to sticks
 
 ---
 
+## KO: 1-1) AMC 멀티제어 모드 | EN: AMC Multi-Control Mode
+
+| Command | KO | EN |
+|---|---|---|
+| `AMC ON` | AMC 모드 진입 | Enter AMC mode |
+| `AMC OFF` | AMC 모드 해제 | Exit AMC mode |
+
+KO: AMC 모드에서는 조종기 스틱/버튼 제어는 무시되고, PC 명령으로만 제어합니다.  
+KO: `D1~D4`가 붙은 명령은 해당 드론에만 적용됩니다.
+EN: In AMC mode, stick/button inputs are ignored and only PC commands are applied.  
+EN: Commands with `D1~D4` target the specified drone.
+
+---
+
 ## KO: 2) 바인딩 | EN: Binding
 
 | Command | KO | EN |
 |---|---|---|
-| `BIND` | 스캔 후 페어링 전송 | Scan then transmit pairing payload |
+| `BIND` | 스캔 후 페어링 전송 (기본 D1) | Scan then transmit pairing payload (default D1) |
 | `PAIR` | `BIND`와 동일 | Same as `BIND` |
+| `BIND D2` | D2로 바인딩 | Bind to D2 |
+| `D3 BIND` | D3로 바인딩 | Bind to D3 |
 
 ---
 
@@ -39,6 +73,9 @@ EN: If PC commands stop for >200ms, fallback to sticks
 ```
 JOY throttle roll pitch yaw aux1 aux2 speed
 ```
+
+KO: AMC 모드에서는 `D1~D4`를 붙인 경우 해당 드론에만 적용됩니다.  
+EN: In AMC mode, use `D1~D4` prefix to target a specific drone.
 
 **Range**
 | Field | KO | EN |
@@ -56,6 +93,9 @@ JOY throttle roll pitch yaw aux1 aux2 speed
 ```
 <cmd> <power> <time_ms>
 ```
+
+KO: AMC 모드에서는 `D1~D4`를 붙인 경우 해당 드론에만 적용됩니다.  
+EN: In AMC mode, use `D1~D4` prefix to target a specific drone.
 
 | Command | KO | EN |
 |---|---|---|
@@ -79,6 +119,9 @@ JOY throttle roll pitch yaw aux1 aux2 speed
 | `HOVER` | PC 제어 종료 | Exit PC control |
 | `FLOW ON` / `FLOW 1` | 옵티컬 플로우(Flow) ON | Optical flow ON |
 | `FLOW OFF` / `FLOW 0` | 옵티컬 플로우(Flow) OFF | Optical flow OFF |
+
+KO: `HEADLESS`, `FLOW`, `SPEED`는 전체에 적용됩니다.  
+EN: `HEADLESS`, `FLOW`, and `SPEED` apply globally.
 
 ---
 
