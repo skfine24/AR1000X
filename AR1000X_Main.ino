@@ -6,6 +6,10 @@ KO: 핀/LED/버튼/PC 명령은 AR1000X_Controller_Operation.md 참고
 EN: See AR1000X_Controller_Operation.md for pins/LEDs/buttons/PC commands
 */
 
+// KO/EN: Forward declarations to satisfy Arduino's auto-prototypes
+struct Signal;
+struct LinkPayload;
+
 #if defined(USE_TINYUSB)
 // KO: TinyUSBDevice(Adafruit 스택) 사용 시 아래 include 주석 해제
 // EN: For TinyUSBDevice (Adafruit stack). Uncomment include below if needed
@@ -17,6 +21,47 @@ EN: See AR1000X_Controller_Operation.md for pins/LEDs/buttons/PC commands
 #include <SPI.h>
 #include <RF24.h>
 #include <EEPROM.h>
+
+// KO: USB 연결 여부(호스트가 시리얼을 열었을 때 true)
+// EN: USB session active (true when host opens serial)
+static inline bool usbSessionActive(){
+  return (bool)Serial;
+}
+
+// KO/EN: Serial 출력은 PC 연결 시에만
+static inline void logPrintln(){
+  if(usbSessionActive()) Serial.println();
+}
+static inline void logPrint(const char* v){ if(usbSessionActive()) Serial.print(v); }
+static inline void logPrint(const String& v){ if(usbSessionActive()) Serial.print(v); }
+static inline void logPrint(char v){ if(usbSessionActive()) Serial.print(v); }
+static inline void logPrint(int v){ if(usbSessionActive()) Serial.print(v); }
+static inline void logPrint(unsigned int v){ if(usbSessionActive()) Serial.print(v); }
+static inline void logPrint(long v){ if(usbSessionActive()) Serial.print(v); }
+static inline void logPrint(unsigned long v){ if(usbSessionActive()) Serial.print(v); }
+static inline void logPrint(float v){ if(usbSessionActive()) Serial.print(v); }
+static inline void logPrint(double v){ if(usbSessionActive()) Serial.print(v); }
+static inline void logPrint(int v, int fmt){ if(usbSessionActive()) Serial.print(v, fmt); }
+static inline void logPrint(unsigned int v, int fmt){ if(usbSessionActive()) Serial.print(v, fmt); }
+static inline void logPrint(long v, int fmt){ if(usbSessionActive()) Serial.print(v, fmt); }
+static inline void logPrint(unsigned long v, int fmt){ if(usbSessionActive()) Serial.print(v, fmt); }
+static inline void logPrint(float v, int fmt){ if(usbSessionActive()) Serial.print(v, fmt); }
+static inline void logPrint(double v, int fmt){ if(usbSessionActive()) Serial.print(v, fmt); }
+static inline void logPrintln(const char* v){ if(usbSessionActive()) Serial.println(v); }
+static inline void logPrintln(const String& v){ if(usbSessionActive()) Serial.println(v); }
+static inline void logPrintln(char v){ if(usbSessionActive()) Serial.println(v); }
+static inline void logPrintln(int v){ if(usbSessionActive()) Serial.println(v); }
+static inline void logPrintln(unsigned int v){ if(usbSessionActive()) Serial.println(v); }
+static inline void logPrintln(long v){ if(usbSessionActive()) Serial.println(v); }
+static inline void logPrintln(unsigned long v){ if(usbSessionActive()) Serial.println(v); }
+static inline void logPrintln(float v){ if(usbSessionActive()) Serial.println(v); }
+static inline void logPrintln(double v){ if(usbSessionActive()) Serial.println(v); }
+static inline void logPrintln(int v, int fmt){ if(usbSessionActive()) Serial.println(v, fmt); }
+static inline void logPrintln(unsigned int v, int fmt){ if(usbSessionActive()) Serial.println(v, fmt); }
+static inline void logPrintln(long v, int fmt){ if(usbSessionActive()) Serial.println(v, fmt); }
+static inline void logPrintln(unsigned long v, int fmt){ if(usbSessionActive()) Serial.println(v, fmt); }
+static inline void logPrintln(float v, int fmt){ if(usbSessionActive()) Serial.println(v, fmt); }
+static inline void logPrintln(double v, int fmt){ if(usbSessionActive()) Serial.println(v, fmt); }
 
 // ============================================================================
 // KO: RF 핀
@@ -30,8 +75,10 @@ EN: See AR1000X_Controller_Operation.md for pins/LEDs/buttons/PC commands
 // EN: MUX pins
 // ============================================================================
 #define MUX_S0     22
-#define MUX_S1     21
-#define MUX_S2     20
+// KO: S1/S2는 보드에서 GND에 고정 (미사용)
+// EN: S1/S2 are tied to GND on board (unused)
+#define MUX_S1     -1
+#define MUX_S2     -1
 #define MUX_ADC    29
 
 // ============================================================================
@@ -51,6 +98,7 @@ EN: See AR1000X_Controller_Operation.md for pins/LEDs/buttons/PC commands
 #define BTN_TRIM_MODE  14
 #define BTN_HEADLESS   13
 #define BTN_FLOW_TOGGLE 10
+#define BTN_LED_SERVO  12
 
 // ============================================================================
 // KO: LED 핀(사용자 지정)
@@ -59,6 +107,11 @@ EN: See AR1000X_Controller_Operation.md for pins/LEDs/buttons/PC commands
 #define LED1_POWER    25  // KO: LED1 / EN: LED1
 #define LED2_HEADLESS 23  // KO: LED2 / EN: LED2
 #define LED3_TRIM     24  // KO: LED3 / EN: LED3
+
+// KO: 부팅 LED 시퀀스(LED1->LED2->LED3, 0.5s씩)
+// EN: Boot LED sequence (LED1->LED2->LED3, 0.5s each)
+static uint32_t bootAnimStartMs = 0;
+static bool bootAnimDone = false;
 
 // ============================================================================
 // KO: RF 파이프 주소(매크로 충돌 방지 위해 이름 변경)
@@ -69,6 +122,15 @@ static const uint8_t PIPE_ADDR_PAIR[5] = {0xE8,0xE8,0xF0,0xF0,0xE1};
 
 static const uint8_t PAIR_CHANNEL = 76;
 
+// KO: 다중 드론 프로파일 저장 (D1~D4)
+// EN: Multi-drone profile storage (D1..D4)
+static const uint8_t PROFILE_COUNT = 4;
+static const int PROFILE_HOP_BASE = 0;
+static const int PROFILE_HOP_STRIDE = 32;
+static const int PROFILE_ADDR_BASE = 128;
+static const int PROFILE_ADDR_STRIDE = 16;
+static const int LEGACY_ADDR_OFFSET = 32;
+
 // KO: FHSS 기본 홉 테이블(부팅 스캔으로 대체)
 // EN: FHSS default hop table (replaced by boot scan)
 static const uint8_t HOP_MAX = 12;
@@ -78,7 +140,9 @@ static uint8_t nextHopTable[HOP_MAX] = {0};
 static uint8_t nextHopLen = 0;
 static bool nextHopValid = false;
 static bool pendingHopSave = false;
+static bool profilePendingHopSave[PROFILE_COUNT] = {false,false,false,false};
 static bool linkReady = false;
+static bool boundOK = false;
 static uint32_t lastLinkTxMs = 0;
 static const uint32_t HOP_SLOT_MS = 20;
 
@@ -98,6 +162,41 @@ struct LinkPayload {
   uint8_t crc;
 };
 
+// KO: 드론 프로파일(D1~D4)
+// EN: Drone profiles (D1..D4)
+struct ProfileData {
+  uint8_t addr[5];
+  uint8_t hopLen;
+  uint8_t hopTable[HOP_MAX];
+  uint8_t crc;
+};
+
+struct AmcState {
+  Signal sig;
+  bool holdActive;
+  uint32_t holdUntil;
+  uint8_t holdNeutralThrottle;
+  uint32_t aux1Until;
+};
+
+static ProfileData profiles[PROFILE_COUNT] = {};
+static bool profileValid[PROFILE_COUNT] = {false,false,false,false};
+static bool profileLinkReady[PROFILE_COUNT] = {false,false,false,false};
+static bool profileBoundOK[PROFILE_COUNT] = {false,false,false,false};
+static uint32_t profileLastLinkTxMs[PROFILE_COUNT] = {0,0,0,0};
+static uint32_t profileHopStartMs[PROFILE_COUNT] = {0,0,0,0};
+static uint8_t profileHopIdxLast[PROFILE_COUNT] = {0xFF,0xFF,0xFF,0xFF};
+static uint8_t profileHopSeed[PROFILE_COUNT] = {1,1,1,1};
+static AmcState amcStates[PROFILE_COUNT] = {};
+
+static uint8_t currentProfile = 0; // KO: 기본 D1 / EN: default D1
+static bool amcMode = false;
+static bool emergencyAll = false;
+static const uint32_t HEADLESS_LONG_MS = 2000;
+
+static void printDebugLine();
+static bool runPairing();
+
 // KO: 스캔 설정(부팅/페어링 전용)
 // EN: Scan settings (boot/pairing only)
 static const uint8_t SCAN_MIN_CH = 5;  // KO: 2405 MHz / EN: 2405 MHz
@@ -110,11 +209,14 @@ static const uint8_t LINK_FLAG_FACTORY_RESET = 0x01;
 static bool factoryResetReq = false;
 static const uint8_t AUX2_HEADLESS = 0x01;
 static const uint8_t AUX2_FLOW     = 0x02;
+static const uint8_t AUX1_TAKEOFF = 1;
+static const uint8_t AUX1_GYRO_RESET = 2;
+static const uint8_t AUX1_SERVO_TOGGLE = 3;
+static const uint8_t AUX1_LED_STEP = 4;
 
 static const uint32_t EEPROM_MAGIC = 0xA0F1A0F1;
-static const int EEPROM_SIZE = 64;
 static const uint32_t EEPROM_ADDR_MAGIC = 0xA0F1B0B1;
-static const int EEPROM_ADDR_OFFSET = 32;
+static const int EEPROM_SIZE = 256;
 
 
 RF24 radio(RF_CE, RF_CSN);
@@ -175,29 +277,37 @@ static bool eepromInit(){
   return true;
 }
 
-static bool loadHopTableFromEeprom(){
+static inline int hopOffsetForProfile(uint8_t idx){
+  return PROFILE_HOP_BASE + (int)idx * PROFILE_HOP_STRIDE;
+}
+
+static inline int addrOffsetForProfile(uint8_t idx){
+  return PROFILE_ADDR_BASE + (int)idx * PROFILE_ADDR_STRIDE;
+}
+
+static bool loadHopTableFromEepromProfile(uint8_t idx, uint8_t* outTable, uint8_t &outLen){
   if(!eepromInit()) return false;
   HopStore s = {};
-  EEPROM.get(0, s);
+  EEPROM.get(hopOffsetForProfile(idx), s);
   if(s.magic != EEPROM_MAGIC) return false;
   if(s.len < 1 || s.len > HOP_MAX) return false;
   for(uint8_t i = 0; i < s.len; i++){
     if(s.table[i] < SCAN_MIN_CH || s.table[i] > SCAN_MAX_CH) return false;
   }
   if(s.crc != hopCrc(s.table, s.len)) return false;
-  hopLen = s.len;
-  for(uint8_t i = 0; i < hopLen; i++) hopTable[i] = s.table[i];
+  outLen = s.len;
+  for(uint8_t i = 0; i < outLen; i++) outTable[i] = s.table[i];
   return true;
 }
 
-static void saveHopTableToEeprom(){
+static void saveHopTableToEepromProfile(uint8_t idx, const uint8_t* table, uint8_t len){
   if(!eepromInit()) return;
   HopStore s = {};
   s.magic = EEPROM_MAGIC;
-  s.len = hopLen;
-  for(uint8_t i = 0; i < HOP_MAX; i++) s.table[i] = (i < hopLen) ? hopTable[i] : 0;
+  s.len = len;
+  for(uint8_t i = 0; i < HOP_MAX; i++) s.table[i] = (i < len) ? table[i] : 0;
   s.crc = hopCrc(s.table, s.len);
-  EEPROM.put(0, s);
+  EEPROM.put(hopOffsetForProfile(idx), s);
   EEPROM.commit();
 }
 
@@ -209,69 +319,102 @@ static inline uint8_t addrCrc(const uint8_t* a){
   return c;
 }
 
-static bool loadTxAddrFromEeprom(){
+static bool loadTxAddrFromEepromProfile(uint8_t idx, uint8_t* outAddr){
   if(!eepromInit()) return false;
   AddrStore s = {};
-  EEPROM.get(EEPROM_ADDR_OFFSET, s);
+  EEPROM.get(addrOffsetForProfile(idx), s);
   if(s.magic != EEPROM_ADDR_MAGIC) return false;
   if(s.crc != addrCrc(s.addr)) return false;
   uint8_t orv = s.addr[0] | s.addr[1] | s.addr[2] | s.addr[3] | s.addr[4];
   uint8_t andv = s.addr[0] & s.addr[1] & s.addr[2] & s.addr[3] & s.addr[4];
   if(orv == 0x00 || andv == 0xFF) return false;
-  for(uint8_t i = 0; i < 5; i++) PIPE_ADDR_TX[i] = s.addr[i];
+  for(uint8_t i = 0; i < 5; i++) outAddr[i] = s.addr[i];
   return true;
 }
 
-static void saveTxAddrToEeprom(){
+static void saveTxAddrToEepromProfile(uint8_t idx, const uint8_t* addr){
   if(!eepromInit()) return;
   AddrStore s = {};
   s.magic = EEPROM_ADDR_MAGIC;
-  for(uint8_t i = 0; i < 5; i++) s.addr[i] = PIPE_ADDR_TX[i];
+  for(uint8_t i = 0; i < 5; i++) s.addr[i] = addr[i];
   s.crc = addrCrc(s.addr);
-  EEPROM.put(EEPROM_ADDR_OFFSET, s);
+  EEPROM.put(addrOffsetForProfile(idx), s);
   EEPROM.commit();
 }
 
-static void printTxAddr(){
-  Serial.print("ID ");
-  for(uint8_t i = 0; i < 5; i++){
-    if(i) Serial.print("-");
-    if(PIPE_ADDR_TX[i] < 16) Serial.print("0");
-    Serial.print(PIPE_ADDR_TX[i], HEX);
-  }
-  Serial.println();
+// KO: 레거시(D1) 주소 호환 로드
+// EN: Legacy (D1) address load for backward compatibility
+static bool loadTxAddrFromEepromLegacy(uint8_t* outAddr){
+  if(!eepromInit()) return false;
+  AddrStore s = {};
+  EEPROM.get(LEGACY_ADDR_OFFSET, s);
+  if(s.magic != EEPROM_ADDR_MAGIC) return false;
+  if(s.crc != addrCrc(s.addr)) return false;
+  uint8_t orv = s.addr[0] | s.addr[1] | s.addr[2] | s.addr[3] | s.addr[4];
+  uint8_t andv = s.addr[0] & s.addr[1] & s.addr[2] & s.addr[3] & s.addr[4];
+  if(orv == 0x00 || andv == 0xFF) return false;
+  for(uint8_t i = 0; i < 5; i++) outAddr[i] = s.addr[i];
+  return true;
 }
 
-static void printDebugLine(){
-  Serial.print("DBG ");
-  Serial.print("T:"); Serial.print((int)stickSig.throttle);
-  Serial.print(" R:"); Serial.print((int)stickSig.roll);
-  Serial.print(" P:"); Serial.print((int)stickSig.pitch);
-  Serial.print(" Y:"); Serial.print((int)stickSig.yaw);
-  Serial.print(" SPD:"); Serial.print((int)stickSig.speed);
-  Serial.print(" H:"); Serial.print(headlessOn ? 1 : 0);
-  Serial.print(" F:"); Serial.print(flowOn ? 1 : 0);
-  Serial.print(" VBAT:"); Serial.print(vbat, 2); Serial.print("V");
-  Serial.print(" MODE:"); Serial.print(controlMode == MODE1 ? 1 : 2);
-  Serial.print(" LINK:"); Serial.print(linkReady ? 1 : 0);
-  Serial.print(" PC:"); Serial.print(pcOverride ? 1 : 0);
-  Serial.println();
+// KO: 기존 함수 호환(프로파일 D1)
+// EN: Backward-compatible wrappers (profile D1)
+static bool loadHopTableFromEeprom(){
+  return loadHopTableFromEepromProfile(0, hopTable, hopLen);
+}
+
+static void saveHopTableToEeprom(){
+  saveHopTableToEepromProfile(0, hopTable, hopLen);
+}
+
+static bool loadTxAddrFromEeprom(){
+  return loadTxAddrFromEepromProfile(0, PIPE_ADDR_TX);
+}
+
+static void saveTxAddrToEeprom(){
+  saveTxAddrToEepromProfile(0, PIPE_ADDR_TX);
+}
+
+static void printTxAddr(){
+  logPrint("ID ");
+  for(uint8_t i = 0; i < 5; i++){
+    if(i) logPrint("-");
+    if(PIPE_ADDR_TX[i] < 16) logPrint("0");
+    logPrint(PIPE_ADDR_TX[i], HEX);
+  }
+  logPrintln();
 }
 
 static void printBanner(){
-  Serial.println("SYUBEA Co., LTD");
-  Serial.println("www.1510.co.kr");
-  Serial.print("Model : AR1000X Controller - Ver.");
-  Serial.println(CTRL_VERSION);
-  Serial.println();
+  logPrintln("SYUBEA Co., LTD");
+  logPrintln("www.1510.co.kr");
+  logPrint("Model : AR1000X Controller - Ver.");
+  logPrintln(CTRL_VERSION);
+  logPrintln();
   printTxAddr();
 }
 
-static void generateTxAddr(){
+static inline uint64_t chipIdToU64(uint64_t v){ return v; }
+static inline uint64_t chipIdToU64(const char* s){
+  uint64_t v = 0;
+  if(!s) return 0;
+  while(*s){
+    char c = *s++;
+    uint8_t n;
+    if(c >= '0' && c <= '9') n = (uint8_t)(c - '0');
+    else if(c >= 'a' && c <= 'f') n = (uint8_t)(c - 'a' + 10);
+    else if(c >= 'A' && c <= 'F') n = (uint8_t)(c - 'A' + 10);
+    else continue;
+    v = (v << 4) | n;
+  }
+  return v;
+}
+
+static void generateBaseAddr(uint8_t* outAddr){
 #if defined(ARDUINO_ARCH_RP2040)
-  uint64_t chip = rp2040.getChipID();
+  uint64_t chip = chipIdToU64(rp2040.getChipID());
   for(uint8_t i = 0; i < 5; i++){
-    PIPE_ADDR_TX[i] = (uint8_t)(chip >> (i * 8));
+    outAddr[i] = (uint8_t)(chip >> (i * 8));
   }
 #else
   uint32_t seed = micros();
@@ -280,13 +423,32 @@ static void generateTxAddr(){
   seed ^= (uint32_t)analogRead(ADC_PITCH);
   randomSeed(seed);
   for(uint8_t i = 0; i < 5; i++){
-    PIPE_ADDR_TX[i] = (uint8_t)random(1, 255);
+    outAddr[i] = (uint8_t)random(1, 255);
   }
 #endif
-  uint8_t orv = PIPE_ADDR_TX[0] | PIPE_ADDR_TX[1] | PIPE_ADDR_TX[2] | PIPE_ADDR_TX[3] | PIPE_ADDR_TX[4];
-  uint8_t andv = PIPE_ADDR_TX[0] & PIPE_ADDR_TX[1] & PIPE_ADDR_TX[2] & PIPE_ADDR_TX[3] & PIPE_ADDR_TX[4];
+  uint8_t orv = outAddr[0] | outAddr[1] | outAddr[2] | outAddr[3] | outAddr[4];
+  uint8_t andv = outAddr[0] & outAddr[1] & outAddr[2] & outAddr[3] & outAddr[4];
   if(orv == 0x00 || andv == 0xFF){
-    PIPE_ADDR_TX[0] ^= 0xA5;
+    outAddr[0] ^= 0xA5;
+  }
+}
+
+static void generateTxAddr(){
+  generateBaseAddr(PIPE_ADDR_TX);
+}
+
+static void generateProfileAddr(uint8_t idx, uint8_t* outAddr){
+  generateBaseAddr(outAddr);
+  uint8_t mix = (uint8_t)((idx + 1) * 37);
+  for(uint8_t i = 0; i < 5; i++){
+    outAddr[i] ^= (uint8_t)(mix + (i * 11));
+    if(outAddr[i] == 0x00) outAddr[i] = 0xA5 ^ (uint8_t)i;
+    if(outAddr[i] == 0xFF) outAddr[i] = 0x5A ^ (uint8_t)i;
+  }
+  uint8_t orv = outAddr[0] | outAddr[1] | outAddr[2] | outAddr[3] | outAddr[4];
+  uint8_t andv = outAddr[0] & outAddr[1] & outAddr[2] & outAddr[3] & outAddr[4];
+  if(orv == 0x00 || andv == 0xFF){
+    outAddr[0] ^= 0xA5;
   }
 }
 
@@ -294,6 +456,72 @@ static void initTxAddr(){
   if(loadTxAddrFromEeprom()) return;
   generateTxAddr();
   saveTxAddrToEeprom();
+}
+
+static void initProfiles(bool regenAll){
+  // KO: 주소 로드/생성
+  // EN: load or generate addresses
+  for(uint8_t i = 0; i < PROFILE_COUNT; i++){
+    bool ok = false;
+    if(!regenAll){
+      ok = loadTxAddrFromEepromProfile(i, profiles[i].addr);
+      if(!ok && i == 0){
+        // KO: 레거시 D1 주소 로드
+        // EN: legacy D1 address load
+        ok = loadTxAddrFromEepromLegacy(profiles[i].addr);
+      }
+    }
+    if(!ok){
+      generateProfileAddr(i, profiles[i].addr);
+      saveTxAddrToEepromProfile(i, profiles[i].addr);
+    }
+    profileHopSeed[i] = profiles[i].addr[4] ? profiles[i].addr[4] : 1;
+    profileValid[i] = true;
+  }
+
+  // KO: 홉 테이블 로드/생성
+  // EN: load or build hop tables
+  if(!loadHopTableFromEepromProfile(0, profiles[0].hopTable, profiles[0].hopLen)){
+    scanAndBuildHopTable(profiles[0].hopTable, profiles[0].hopLen);
+    saveHopTableToEepromProfile(0, profiles[0].hopTable, profiles[0].hopLen);
+  }
+  for(uint8_t i = 1; i < PROFILE_COUNT; i++){
+    if(!loadHopTableFromEepromProfile(i, profiles[i].hopTable, profiles[i].hopLen)){
+      profiles[i].hopLen = profiles[0].hopLen;
+      for(uint8_t j = 0; j < HOP_MAX; j++){
+        profiles[i].hopTable[j] = profiles[0].hopTable[j];
+      }
+      saveHopTableToEepromProfile(i, profiles[i].hopTable, profiles[i].hopLen);
+    }
+  }
+}
+
+static void loadProfileRuntime(uint8_t idx, uint32_t now){
+  for(uint8_t i = 0; i < 5; i++) PIPE_ADDR_TX[i] = profiles[idx].addr[i];
+  hopLen = profiles[idx].hopLen;
+  for(uint8_t i = 0; i < HOP_MAX; i++) hopTable[i] = profiles[idx].hopTable[i];
+  hopSeed = profileHopSeed[idx] ? profileHopSeed[idx] : 1;
+  hopStartMs = profileHopStartMs[idx];
+  if(hopStartMs == 0){
+    hopStartMs = now;
+    profileHopStartMs[idx] = now;
+  }
+  hopIdxLast = profileHopIdxLast[idx];
+  radio.openWritingPipe(PIPE_ADDR_TX);
+  linkReady = profileLinkReady[idx];
+  boundOK = profileBoundOK[idx];
+  lastLinkTxMs = profileLastLinkTxMs[idx];
+  pendingHopSave = profilePendingHopSave[idx];
+}
+
+static void saveProfileRuntime(uint8_t idx){
+  profileHopSeed[idx] = hopSeed;
+  profileHopStartMs[idx] = hopStartMs;
+  profileHopIdxLast[idx] = hopIdxLast;
+  profileLinkReady[idx] = linkReady;
+  profileBoundOK[idx] = boundOK;
+  profileLastLinkTxMs[idx] = lastLinkTxMs;
+  profilePendingHopSave[idx] = pendingHopSave;
 }
 
 static inline uint8_t linkCrc(const LinkPayload &p){
@@ -388,6 +616,39 @@ static bool sendLinkSetup(uint32_t now){
   return ok;
 }
 
+static bool sendSignalForProfile(uint8_t idx, const Signal &sig, uint32_t now){
+  loadProfileRuntime(idx, now);
+  if(!linkReady){
+    sendLinkSetup(now);
+  }
+  Signal txSig = sig;
+  fhssTxUpdate(now);
+  txSig.hop = hopIdx;
+  bool ok = radio.write(&txSig, sizeof(txSig));
+  if(ok){
+    boundOK = true;
+    if(pendingHopSave){
+      saveHopTableToEepromProfile(idx, hopTable, hopLen);
+      profiles[idx].hopLen = hopLen;
+      for(uint8_t i = 0; i < HOP_MAX; i++){
+        profiles[idx].hopTable[i] = hopTable[i];
+      }
+      pendingHopSave = false;
+    }
+  }
+  saveProfileRuntime(idx);
+  return ok;
+}
+
+static void sendEmergencyAll(uint32_t now){
+  uint8_t savedProfile = currentProfile;
+  Signal e = makeEmergencySignal();
+  for(uint8_t i = 0; i < PROFILE_COUNT; i++){
+    sendSignalForProfile(i, e, now);
+  }
+  loadProfileRuntime(savedProfile, now);
+}
+
 Signal tx;
 
 // ============================================================================
@@ -414,7 +675,6 @@ static String pcLine;
 // KO: 상태 / EN: State
 // ============================================================================
 bool trimMode = false;
-bool boundOK = false;
 bool emergencyPulse = false;
 static bool killHoldActive = false;
 static bool killTriggered = false;
@@ -433,11 +693,7 @@ static uint16_t pcLastTimeMs = 0;
 
 
 static void applyEmergency(){
-  pcArmed = false;
-  pcOverride = false;
-  pcSig = {};
-  pcSig.throttle = 0;
-  pcSig.speed = 1;
+  triggerEmergencyAll(millis());
 }
 
 
@@ -458,11 +714,72 @@ static void setNeutral(Signal &s, uint8_t thr){
   // KO: aux1/aux2는 명령이 바꾸지 않으면 유지 / EN: aux1/aux2 keep as-is unless command changes them
 }
 
+static Signal makeEmergencySignal(){
+  Signal s = {};
+  s.throttle = 0;
+  s.roll = 127;
+  s.pitch = 127;
+  s.yaw = 127;
+  s.aux1 = 0;
+  s.aux2 = 0;
+  s.speed = 1;
+  return s;
+}
+
+static void resetAmcState(uint8_t idx, uint8_t baseThr){
+  setNeutral(amcStates[idx].sig, baseThr);
+  amcStates[idx].sig.speed = speedMode;
+  amcStates[idx].sig.aux1 = 0;
+  amcStates[idx].sig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+  amcStates[idx].holdActive = false;
+  amcStates[idx].holdUntil = 0;
+  amcStates[idx].holdNeutralThrottle = baseThr;
+  amcStates[idx].aux1Until = 0;
+}
+
+static void initAmcStates(uint8_t baseThr){
+  for(uint8_t i = 0; i < PROFILE_COUNT; i++){
+    resetAmcState(i, baseThr);
+  }
+}
+
+static void triggerEmergencyAll(uint32_t now){
+  (void)now;
+  emergencyAll = true;
+  emergencyPulse = true;
+  pcArmed = false;
+  pcOverride = false;
+  pcHoldActive = false;
+  pcSig = makeEmergencySignal();
+  for(uint8_t i = 0; i < PROFILE_COUNT; i++){
+    resetAmcState(i, 0);
+    amcStates[i].sig = makeEmergencySignal();
+  }
+}
+
 static void startHold(uint32_t now, uint32_t durMs){
   pcHoldActive = true;
   pcHoldUntil = now + durMs;
   lastPcMs = now;       // KO: 유지(keep alive) / EN: keep alive
   pcOverride = true;
+}
+
+static void amcStartHold(uint8_t idx, uint32_t now, uint32_t durMs){
+  amcStates[idx].holdActive = true;
+  amcStates[idx].holdUntil = now + durMs;
+}
+
+static Signal buildAmcSignal(uint8_t idx, uint32_t now){
+  AmcState &st = amcStates[idx];
+  if(st.holdActive && (int32_t)(now - st.holdUntil) >= 0){
+    st.holdActive = false;
+    setNeutral(st.sig, st.holdNeutralThrottle);
+  }
+  Signal s = st.sig;
+  if(now < st.aux1Until){
+    s.aux1 = AUX1_TAKEOFF;
+  }
+  return s;
 }
 
 static void handlePcLine(String s){
@@ -474,30 +791,87 @@ static void handlePcLine(String s){
   String u = s;
   u.trim();
   u.toUpperCase();
+  uint32_t now = millis();
+
+  // KO: D1~D4 타겟 프리픽스 파싱
+  // EN: Parse D1..D4 target prefix
+  uint8_t targetProfile = currentProfile;
+  if(u.length() >= 2 && u.charAt(0) == 'D'){
+    char d = u.charAt(1);
+    if(d >= '1' && d <= ('0' + PROFILE_COUNT)){
+      targetProfile = (uint8_t)(d - '1');
+      u = u.substring(2);
+      u.trim();
+      if(u.length() && (u.charAt(0) == ':' || u.charAt(0) == ',')){
+        u = u.substring(1);
+        u.trim();
+      }
+    }
+  }
+
+  // KO: AMC 멀티제어 모드
+  // EN: AMC multi-control mode
+  if(u == "AMC" || u == "AMC ON" || u == "AMC 1"){
+    amcMode = true;
+    initAmcStates(stickSig.throttle);
+    pcOverride = false;
+    pcHoldActive = false;
+    logPrintln("OK");
+    return;
+  }
+  if(u == "AMC OFF" || u == "AMC 0"){
+    amcMode = false;
+    pcOverride = false;
+    pcHoldActive = false;
+    logPrintln("OK");
+    return;
+  }
 
   // KO: FLOW 토글(PC 시리얼)
   // EN: FLOW toggle (PC serial)
   if(u == "FLOW ON" || u == "FLOW 1"){
     flowOn = true;
-    Serial.println("OK");
+    logPrintln("OK");
     return;
   }
   if(u == "FLOW OFF" || u == "FLOW 0"){
     flowOn = false;
-    Serial.println("OK");
+    logPrintln("OK");
     return;
   }
 
   // KO: 수동 바인딩(스캔 + 페어링 페이로드)
   // EN: Manual binding (scan + pairing payload)
-  if(u == "BIND" || u == "PAIR"){
+  if(u.startsWith("BIND") || u.startsWith("PAIR")){
+    uint8_t bindTarget = targetProfile;
+    int sp = u.indexOf(' ');
+    if(sp > 0){
+      String arg = u.substring(sp + 1);
+      arg.trim();
+      if(arg.length() >= 2 && arg.charAt(0) == 'D'){
+        char d = arg.charAt(1);
+        if(d >= '1' && d <= ('0' + PROFILE_COUNT)){
+          bindTarget = (uint8_t)(d - '1');
+        }
+      }
+    }
+    uint8_t savedProfile = currentProfile;
+    currentProfile = bindTarget;
+    loadProfileRuntime(bindTarget, now);
     scanAndBuildHopTable(hopTable, hopLen);
+    profiles[bindTarget].hopLen = hopLen;
+    for(uint8_t i = 0; i < HOP_MAX; i++){
+      profiles[bindTarget].hopTable[i] = hopTable[i];
+    }
     nextHopValid = false;
     bool pairedOk = runPairing();
     boundOK = false;
     linkReady = pairedOk;
     pendingHopSave = true;
-    Serial.println("OK");
+    saveProfileRuntime(bindTarget);
+    currentProfile = savedProfile;
+    loadProfileRuntime(savedProfile, now);
+    logPrintln("OK");
     return;
   }
 
@@ -506,7 +880,7 @@ static void handlePcLine(String s){
   if(u == "DBUG"){
     debugEnabled = !debugEnabled;
     debugNextMs = millis() + 1000;
-    Serial.println(debugEnabled ? "DBUG ON" : "DBUG OFF");
+    logPrintln(debugEnabled ? "DBUG ON" : "DBUG OFF");
     if(debugEnabled){
       printDebugLine();
     }
@@ -520,11 +894,6 @@ static void handlePcLine(String s){
     return;
   }
 
-  if(stickActive){
-    Serial.println("IGN");
-    return;
-  }
-
   // ==========================================================================
   // KO: 즉시 안전 처리
   // EN: Immediate safety
@@ -532,13 +901,15 @@ static void handlePcLine(String s){
   if(u == "EMERGENCY"){
     applyEmergency();
     pcHoldActive = false;
-    // KO: 스로틀 0 즉시 패킷(가능한 한)
-    // EN: Best-effort immediate packet with throttle 0
-    outSig = pcSig;
-    fhssTxUpdate(millis());
-    outSig.hop = hopIdx;
-    radio.write(&outSig, sizeof(outSig));
-    Serial.println("OK");
+    // KO: 모든 드론에 즉시 비상정지 전송
+    // EN: Send emergency to all drones immediately
+    sendEmergencyAll(now);
+    logPrintln("OK");
+    return;
+  }
+
+  if(stickActive && !amcMode){
+    logPrintln("IGN");
     return;
   }
 
@@ -552,7 +923,7 @@ static void handlePcLine(String s){
       pcOverride = false;
       pcHoldActive = false;
     }
-    Serial.println("OK");
+    logPrintln("OK");
     return;
   }
 
@@ -570,7 +941,7 @@ static void handlePcLine(String s){
       pcArmed = false;
       pcHoldActive = false;
     }
-    Serial.println("OK");
+    logPrintln("OK");
     return;
   }
 
@@ -579,8 +950,8 @@ static void handlePcLine(String s){
   // EN: Telemetry query
   // ==========================================================================
   if(u == "BATTERY?" || u == "BATTERY" || u == "BAT?" || u == "BAT"){
-    Serial.print("BAT ");
-    Serial.println(vbat, 2);
+    logPrint("BAT ");
+    logPrintln(vbat, 2);
     return;
   }
 
@@ -593,7 +964,10 @@ static void handlePcLine(String s){
     sp = constrain(sp, 1, 3);
     speedMode = (uint8_t)sp;
     pcSig.speed = (uint8_t)sp;
-    Serial.println("OK");
+    for(uint8_t i = 0; i < PROFILE_COUNT; i++){
+      amcStates[i].sig.speed = (uint8_t)sp;
+    }
+    logPrintln("OK");
     return;
   }
 
@@ -602,15 +976,28 @@ static void handlePcLine(String s){
   // EN: dd3 start/stop/takeoff/land/headless/gyroreset/funled
   // ==========================================================================
   if(u == "TAKEOFF" || u == "LAND" || u == "START"){
-    if(!pcArmed){ Serial.println("IGN"); return; }
-    // KO: AUX1 펄스 사용(버튼 자동 이륙/착륙과 동일)
-    // EN: Use AUX1 pulse (same behavior as button auto takeoff/land)
-    pcSig.speed = speedMode;
-    pcSig.aux2 = headlessOn ? 1 : 0;
-    setNeutral(pcSig, stickSig.throttle);
-    pcSig.aux1 = 1;
-    startHold(millis(), 180); // KO: ~180ms 펄스 / EN: ~180ms pulse
-    Serial.println("OK");
+    if(!pcArmed){ logPrintln("IGN"); return; }
+    if(amcMode){
+      // KO: AMC는 타겟 프로파일에 AUX1 펄스
+      // EN: AMC uses AUX1 pulse on target profile
+      AmcState &st = amcStates[targetProfile];
+      uint8_t baseThr = st.sig.throttle;
+      st.holdNeutralThrottle = baseThr;
+      st.sig.speed = speedMode;
+      st.sig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+      setNeutral(st.sig, baseThr);
+      st.aux1Until = now + 180;
+      st.holdActive = false;
+    } else {
+      // KO: AUX1 펄스 사용(버튼 자동 이륙/착륙과 동일)
+      // EN: Use AUX1 pulse (same behavior as button auto takeoff/land)
+      pcSig.speed = speedMode;
+      pcSig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+      setNeutral(pcSig, stickSig.throttle);
+      pcSig.aux1 = 1;
+      startHold(millis(), 180); // KO: ~180ms 펄스 / EN: ~180ms pulse
+    }
+    logPrintln("OK");
     return;
   }
 
@@ -619,35 +1006,42 @@ static void handlePcLine(String s){
     // EN: Treat STOP as emergency throttle-cut (safer)
     applyEmergency();
     pcHoldActive = false;
-    outSig = pcSig;
-    radio.write(&outSig, sizeof(outSig));
-    Serial.println("OK");
+    sendEmergencyAll(now);
+    logPrintln("OK");
     return;
   }
 
   if(u == "HEADLESS"){
     headlessOn = !headlessOn;
-    pcSig.aux2 = headlessOn ? 1 : 0;
-    Serial.println("OK");
+    pcSig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+    for(uint8_t i = 0; i < PROFILE_COUNT; i++){
+      amcStates[i].sig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+    }
+    logPrintln("OK");
     return;
   }
 
   if(u == "GYRORESET" || u == "GYRO_RESET"){
     // KO: 이 프로토콜에 정의되지 않음; dd3 UI 유지를 위해 OK 응답
     // EN: Not defined in this protocol; acknowledge to keep dd3 UI happy
-    Serial.println("OK");
+    logPrintln("OK");
     return;
   }
 
   if(u == "FUNLED" || u == "FUN_LED"){
-    Serial.println("OK");
+    logPrintln("OK");
     return;
   }
 
   if(u == "HOVER"){
-    pcHoldActive = false;
-    pcOverride = false;
-    Serial.println("OK");
+    if(amcMode){
+      amcStates[targetProfile].holdActive = false;
+      setNeutral(amcStates[targetProfile].sig, amcStates[targetProfile].holdNeutralThrottle);
+    } else {
+      pcHoldActive = false;
+      pcOverride = false;
+    }
+    logPrintln("OK");
     return;
   }
 
@@ -656,27 +1050,41 @@ static void handlePcLine(String s){
   // EN: JOY direct (still supported)
   // ==========================================================================
   if(u.startsWith("JOY ")){
-    if(!pcArmed){ Serial.println("IGN"); return; }
+    if(!pcArmed){ logPrintln("IGN"); return; }
 
     int t,r,p,y,a1,a2,spd;
     int n = sscanf(u.c_str(), "JOY %d %d %d %d %d %d %d", &t,&r,&p,&y,&a1,&a2,&spd);
     if(n == 7){
-      pcSig.throttle = (uint8_t)constrain(t,  0, 255);
-      pcSig.roll     = (uint8_t)constrain(r,  0, 255);
-      pcSig.pitch    = (uint8_t)constrain(p,  0, 255);
-      pcSig.yaw      = (uint8_t)constrain(y,  0, 255);
-      pcSig.aux1     = (uint8_t)constrain(a1, 0, 255);
-      pcSig.aux2     = (uint8_t)constrain(a2, 0, 255);
       int sm = constrain(spd, 1, 3);
-      pcSig.speed = (uint8_t)sm;
+      if(amcMode){
+        AmcState &st = amcStates[targetProfile];
+        st.sig.throttle = (uint8_t)constrain(t,  0, 255);
+        st.sig.roll     = (uint8_t)constrain(r,  0, 255);
+        st.sig.pitch    = (uint8_t)constrain(p,  0, 255);
+        st.sig.yaw      = (uint8_t)constrain(y,  0, 255);
+        st.sig.aux1     = (uint8_t)constrain(a1, 0, 255);
+        st.sig.aux2     = (uint8_t)constrain(a2, 0, 255);
+        st.sig.speed    = (uint8_t)sm;
+        st.holdActive = false;
+        st.aux1Until = 0;
+        st.holdNeutralThrottle = st.sig.throttle;
+      } else {
+        pcSig.throttle = (uint8_t)constrain(t,  0, 255);
+        pcSig.roll     = (uint8_t)constrain(r,  0, 255);
+        pcSig.pitch    = (uint8_t)constrain(p,  0, 255);
+        pcSig.yaw      = (uint8_t)constrain(y,  0, 255);
+        pcSig.aux1     = (uint8_t)constrain(a1, 0, 255);
+        pcSig.aux2     = (uint8_t)constrain(a2, 0, 255);
+        pcSig.speed = (uint8_t)sm;
 
-      lastPcMs = millis();
-      pcOverride = true;
-      pcHoldActive = false; // KO: JOY는 연속 스트림 전송 필요 / EN: JOY should be streamed continuously
-      Serial.println("OK");
+        lastPcMs = millis();
+        pcOverride = true;
+        pcHoldActive = false; // KO: JOY는 연속 스트림 전송 필요 / EN: JOY should be streamed continuously
+      }
+      logPrintln("OK");
       return;
     }
-    Serial.println("ERR");
+    logPrintln("ERR");
     return;
   }
 
@@ -702,52 +1110,90 @@ static void handlePcLine(String s){
         if(tms < 0) tms = -tms;
         tms = constrain(tms, 20, 15000);
 
-        if(!pcArmed){ Serial.println("IGN"); return; }
+        if(!pcArmed){ logPrintln("IGN"); return; }
 
         int d = powerToDelta(pwr);
         pcLastPower = (uint16_t)pwr;
         pcLastTimeMs = (uint16_t)tms;
 
-        // KO: 기준 스로틀 = 현재 스틱 스로틀 / EN: base throttle = current stick throttle
-        uint8_t baseThr = stickSig.throttle;
-        pcHoldNeutralThrottle = baseThr;
+        if(amcMode){
+          // KO: AMC는 타겟 프로파일에 적용
+          // EN: AMC applies to target profile
+          AmcState &st = amcStates[targetProfile];
+          uint8_t baseThr = st.sig.throttle;
+          st.holdNeutralThrottle = baseThr;
+          st.sig.speed = speedMode;
+          st.sig.aux1 = 0;
+          st.sig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+          st.aux1Until = 0;
 
-        pcSig.speed = speedMode;
-        pcSig.aux1 = 0;
-        pcSig.aux2 = headlessOn ? 1 : 0;
+          // KO: 중립에서 시작 / EN: start from neutral
+          setNeutral(st.sig, baseThr);
 
-        // KO: 중립에서 시작 / EN: start from neutral
-        setNeutral(pcSig, baseThr);
+          if(cmd == "UP"){
+            st.sig.throttle = (uint8_t)constrain((int)baseThr + d, 0, 255);
+          } else if(cmd == "DOWN"){
+            st.sig.throttle = (uint8_t)constrain((int)baseThr - d, 0, 255);
+          } else if(cmd == "FORWARD"){
+            st.sig.pitch = (uint8_t)constrain(127 + d, 0, 255);
+          } else if(cmd == "BACK"){
+            st.sig.pitch = (uint8_t)constrain(127 - d, 0, 255);
+          } else if(cmd == "RIGHT"){
+            st.sig.roll = (uint8_t)constrain(127 + d, 0, 255);
+          } else if(cmd == "LEFT"){
+            st.sig.roll = (uint8_t)constrain(127 - d, 0, 255);
+          } else if(cmd == "CW"){
+            st.sig.yaw = (uint8_t)constrain(127 + d, 0, 255);
+          } else if(cmd == "CCW"){
+            st.sig.yaw = (uint8_t)constrain(127 - d, 0, 255);
+          } else {
+            logPrintln("ERR");
+            return;
+          }
 
-        if(cmd == "UP"){
-          pcSig.throttle = (uint8_t)constrain((int)baseThr + d, 0, 255);
-        } else if(cmd == "DOWN"){
-          pcSig.throttle = (uint8_t)constrain((int)baseThr - d, 0, 255);
-        } else if(cmd == "FORWARD"){
-          pcSig.pitch = (uint8_t)constrain(127 + d, 0, 255);
-        } else if(cmd == "BACK"){
-          pcSig.pitch = (uint8_t)constrain(127 - d, 0, 255);
-        } else if(cmd == "RIGHT"){
-          pcSig.roll = (uint8_t)constrain(127 + d, 0, 255);
-        } else if(cmd == "LEFT"){
-          pcSig.roll = (uint8_t)constrain(127 - d, 0, 255);
-        } else if(cmd == "CW"){
-          pcSig.yaw = (uint8_t)constrain(127 + d, 0, 255);
-        } else if(cmd == "CCW"){
-          pcSig.yaw = (uint8_t)constrain(127 - d, 0, 255);
+          amcStartHold(targetProfile, now, (uint32_t)tms);
         } else {
-          Serial.println("ERR");
-          return;
-        }
+          // KO: 기준 스로틀 = 현재 스틱 스로틀 / EN: base throttle = current stick throttle
+          uint8_t baseThr = stickSig.throttle;
+          pcHoldNeutralThrottle = baseThr;
 
-        startHold(millis(), (uint32_t)tms);
-        Serial.println("OK");
+          pcSig.speed = speedMode;
+          pcSig.aux1 = 0;
+          pcSig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+
+          // KO: 중립에서 시작 / EN: start from neutral
+          setNeutral(pcSig, baseThr);
+
+          if(cmd == "UP"){
+            pcSig.throttle = (uint8_t)constrain((int)baseThr + d, 0, 255);
+          } else if(cmd == "DOWN"){
+            pcSig.throttle = (uint8_t)constrain((int)baseThr - d, 0, 255);
+          } else if(cmd == "FORWARD"){
+            pcSig.pitch = (uint8_t)constrain(127 + d, 0, 255);
+          } else if(cmd == "BACK"){
+            pcSig.pitch = (uint8_t)constrain(127 - d, 0, 255);
+          } else if(cmd == "RIGHT"){
+            pcSig.roll = (uint8_t)constrain(127 + d, 0, 255);
+          } else if(cmd == "LEFT"){
+            pcSig.roll = (uint8_t)constrain(127 - d, 0, 255);
+          } else if(cmd == "CW"){
+            pcSig.yaw = (uint8_t)constrain(127 + d, 0, 255);
+          } else if(cmd == "CCW"){
+            pcSig.yaw = (uint8_t)constrain(127 - d, 0, 255);
+          } else {
+            logPrintln("ERR");
+            return;
+          }
+
+          startHold(millis(), (uint32_t)tms);
+        }
+        logPrintln("OK");
         return;
       }
     }
   }
 
-  Serial.println("ERR");
+  logPrintln("ERR");
 }
 
 
@@ -773,9 +1219,24 @@ static void pollPcSerial(){
 enum { MODE2 = 2, MODE1 = 1 };
 uint8_t controlMode = MODE2;
 
-// KO: 배터리(TX 측)
-// EN: Battery (TX side)
-uint32_t lastBatMs = 0;
+static void printDebugLine(){
+  logPrint("DBG ");
+  logPrint("T:"); logPrint((int)stickSig.throttle);
+  logPrint(" R:"); logPrint((int)stickSig.roll);
+  logPrint(" P:"); logPrint((int)stickSig.pitch);
+  logPrint(" Y:"); logPrint((int)stickSig.yaw);
+  logPrint(" SPD:"); logPrint((int)stickSig.speed);
+  logPrint(" H:"); logPrint(headlessOn ? 1 : 0);
+  logPrint(" F:"); logPrint(flowOn ? 1 : 0);
+  logPrint(" VBAT:"); logPrint(vbat, 2); logPrint("V");
+  logPrint(" MODE:"); logPrint(controlMode == MODE1 ? 1 : 2);
+  logPrint(" LINK:"); logPrint(linkReady ? 1 : 0);
+  logPrint(" PC:"); logPrint(pcOverride ? 1 : 0);
+  logPrintln();
+}
+
+// KO: 배터리(TX 측) - 부팅 시 1회 측정
+// EN: Battery (TX side) - measure once at boot
 const float VBAT_LOW = 3.5f;   // KO: 필요 시 조정 / EN: adjust if needed
 const uint8_t STICK_CENTER = 127;
 const uint8_t STICK_THROTTLE_ACTIVE = 15; // KO: 필요 시 조정 / EN: adjust if needed
@@ -788,9 +1249,13 @@ int trimPitch = 0;
 // KO: AUX1 펄스(이륙/착륙 트리거)
 // EN: AUX1 pulse (takeoff/land trigger)
 uint32_t aux1Until = 0;
+uint32_t aux1UserUntil = 0;
+uint8_t aux1UserValue = 0;
 const uint32_t AUX_PULSE = 200;
 const uint32_t AUTO_LONG_MS = 2000;
 const uint32_t GYRO_RESET_PULSE_MS = 300;
+const uint32_t USER_LONG_MS = 1500;
+
 const uint32_t STICK_KILL_HOLD_MS = 2000;
 const uint8_t  STICK_KILL_LOW = 30;
 const uint8_t  STICK_KILL_HIGH = 225;
@@ -804,9 +1269,9 @@ static inline bool btn(int p){ return digitalRead(p) == LOW; }
 
 static inline int readMux(uint8_t ch){
   digitalWrite(MUX_S0, bitRead(ch,0));
-  digitalWrite(MUX_S1, bitRead(ch,1));
-  digitalWrite(MUX_S2, bitRead(ch,2));
-  delayMicroseconds(5);
+  if(MUX_S1 >= 0) digitalWrite(MUX_S1, bitRead(ch,1));
+  if(MUX_S2 >= 0) digitalWrite(MUX_S2, bitRead(ch,2));
+  delayMicroseconds(30);
   return analogRead(MUX_ADC);
 }
 
@@ -817,9 +1282,12 @@ static inline uint8_t mapAxis(int v){
 }
 
 static inline float readBattery(){
-  // KO: MUX ch0 배터리 입력(1/2 분압 가정)
-  // EN: Battery via mux ch0, divider 1/2 assumed
-  int raw = readMux(0);
+  // KO: MUX ch1 배터리 입력(1/2 분압 가정)
+  // EN: Battery via mux ch1, divider 1/2 assumed
+  int raw = readMux(1);
+  // KO: 배터리 읽은 뒤 기본 채널(레버)로 복귀
+  // EN: Return to default channel (lever) after battery read
+  readMux(0);
   return (raw / 4095.0f) * 3.3f * 2.0f;
 }
 
@@ -837,8 +1305,7 @@ static bool runPairing(){
   buildLinkPayload(payload, table, len);
 
   bool pairedOk = false;
-  uint32_t t0 = millis();
-  while(millis() - t0 < 2000){
+  while(!pairedOk){
     // KO: 페어링 페이로드 전송(name + addr + hop table)
     // EN: Send pairing payload (name + addr + hop table)
     if(radio.write(&payload, sizeof(payload))){
@@ -867,27 +1334,49 @@ static bool runPairing(){
 static void updateLEDs(){
   uint32_t t = millis();
 
+  // KO: 부팅 시퀀스(0.5s 간격으로 LED1->LED2->LED3)
+  // EN: boot sequence (0.5s per LED1->LED2->LED3)
+  if(!bootAnimDone){
+    uint32_t dt = t - bootAnimStartMs;
+    if(dt < 1500){
+      uint8_t stage = (uint8_t)(dt / 500); // 0,1,2
+      digitalWrite(LED1_POWER, stage == 0 ? HIGH : LOW);
+      digitalWrite(LED2_HEADLESS, stage == 1 ? HIGH : LOW);
+      digitalWrite(LED3_TRIM, stage == 2 ? HIGH : LOW);
+      return;
+    } else {
+      bootAnimDone = true;
+    }
+  }
+
   // KO: LED1 = 전원/바인딩/배터리 / EN: LED1 = power/bind/battery
   if(vbat < VBAT_LOW){
     digitalWrite(LED1_POWER, (t/250)%2);   // KO: 0.5초 점멸 / EN: 0.5s blink
-  } else if(!boundOK){
-    digitalWrite(LED1_POWER, (t/500)%2);   // KO: 1초 점멸 / EN: 1s blink
+    digitalWrite(LED2_HEADLESS, LOW);
+    digitalWrite(LED3_TRIM, LOW);
+    return;
+  }
+  if(boundOK){
+    digitalWrite(LED1_POWER, HIGH);        // KO: 바인딩 이후 LED1 고정 ON / EN: solid ON after binding
   } else {
-    digitalWrite(LED1_POWER, HIGH);        // KO: 고정 ON / EN: solid ON
+    // KO: 미연결 상태는 1초 점멸 / EN: not bound -> 1s blink
+    digitalWrite(LED1_POWER, (t/500)%2);
   }
 
   // KO: LED2 = 헤드리스
   // EN: LED2 = headless
   if(headlessOn){
-    digitalWrite(LED2_HEADLESS, (t/500)%2); // KO: 1초 점멸 / EN: 1s blink
+    digitalWrite(LED2_HEADLESS, HIGH); // KO: 헤드리스 ON = 고정 점등 / EN: headless ON = solid ON
   } else {
     digitalWrite(LED2_HEADLESS, LOW);
   }
 
-  // KO: LED3 = 트림 모드
-  // EN: LED3 = trim mode
-  if(trimMode){
-    digitalWrite(LED3_TRIM, (t/250)%2);     // KO: 0.5초 점멸 / EN: 0.5s blink
+  // KO: LED3 = AMC 모드(1초 점멸) > 트림 모드(고정 점등)
+  // EN: LED3 = AMC mode (1s blink) > trim mode (solid ON)
+  if(amcMode){
+    digitalWrite(LED3_TRIM, (t/1000)%2); // KO: 1초 ON / 1초 OFF / EN: 1s ON / 1s OFF
+  } else if(trimMode){
+    digitalWrite(LED3_TRIM, HIGH);     // KO: 트림 모드 ON = 고정 점등 / EN: trim mode ON = solid ON
   } else {
     digitalWrite(LED3_TRIM, LOW);
   }
@@ -915,14 +1404,18 @@ void setup(){
   delay(50);
 #endif
   pinMode(MUX_S0, OUTPUT);
-  pinMode(MUX_S1, OUTPUT);
-  pinMode(MUX_S2, OUTPUT);
+  if(MUX_S1 >= 0) pinMode(MUX_S1, OUTPUT);
+  if(MUX_S2 >= 0) pinMode(MUX_S2, OUTPUT);
+  // KO: 기본값은 레버 채널(A0)
+  // EN: Default to lever channel (A0)
+  digitalWrite(MUX_S0, LOW);
 
   pinMode(BTN_PAIR_SPEED, INPUT_PULLUP);
   pinMode(BTN_AUTO, INPUT_PULLUP);
   pinMode(BTN_TRIM_MODE, INPUT_PULLUP);
   pinMode(BTN_HEADLESS, INPUT_PULLUP);
   pinMode(BTN_FLOW_TOGGLE, INPUT_PULLUP);
+  pinMode(BTN_LED_SERVO, INPUT_PULLUP);
 
   pinMode(LED1_POWER, OUTPUT);
   pinMode(LED2_HEADLESS, OUTPUT);
@@ -936,47 +1429,34 @@ void setup(){
   // EN: Boot mode select (GPIO14 held at power on)
   controlMode = btn(BTN_TRIM_MODE) ? MODE1 : MODE2;
 
-  // KO: 고유 TX 주소 자동 생성/로드(EEPROM 저장)
-  // EN: Auto-generate/load unique TX address (stored in EEPROM)
-  // KO: 부팅 시 GPIO10(Flow 버튼) 홀드하면 ID 재생성
-  // EN: Hold GPIO10 (Flow button) on boot to regenerate ID
-  if(btn(BTN_FLOW_TOGGLE)){
-    generateTxAddr();
-    saveTxAddrToEeprom();
-  } else {
-    initTxAddr();
-  }
-  printBanner();
-
   // KO: RF 초기화 / EN: RF init
   radio.begin();
   radio.setChannel(PAIR_CHANNEL);
   radio.setDataRate(RF24_250KBPS);
   radio.setPALevel(RF24_PA_LOW);
-  radio.openWritingPipe(PIPE_ADDR_TX);
-
-  bool loaded = loadHopTableFromEeprom();
-  if(!loaded){
-    scanAndBuildHopTable(hopTable, hopLen);
-    nextHopValid = false;
-  } else {
-    scanAndBuildHopTable(nextHopTable, nextHopLen);
-    nextHopValid = true;
-  }
-
-  hopSeed = PIPE_ADDR_TX[4];
-  if(hopSeed == 0) hopSeed = 1;
-  hopStartMs = millis();
-  hopIdxLast = 0xFF;
+  // KO: 부팅 시 GPIO10(Flow 버튼) 홀드하면 D1~D4 ID 재생성
+  // EN: Hold GPIO10 (Flow button) on boot to regenerate D1..D4 IDs
+  bool regenAll = btn(BTN_FLOW_TOGGLE);
+  initProfiles(regenAll);
+  currentProfile = 0; // D1
+  loadProfileRuntime(currentProfile, millis());
+  nextHopValid = false;
+  pendingHopSave = false;
 
   // KO: 부팅 시 페어링(GPIO15 누름)
   // EN: Pairing on boot (GPIO15 held)
   if(btn(BTN_PAIR_SPEED)){
     scanAndBuildHopTable(hopTable, hopLen);
+    profiles[currentProfile].hopLen = hopLen;
+    for(uint8_t i = 0; i < HOP_MAX; i++) profiles[currentProfile].hopTable[i] = hopTable[i];
+    saveHopTableToEepromProfile(currentProfile, profiles[currentProfile].hopTable, profiles[currentProfile].hopLen);
     nextHopValid = false;
     bool pairedOk = runPairing();
     linkReady = pairedOk;
+    profileLinkReady[currentProfile] = pairedOk;
+    profileBoundOK[currentProfile] = false;
     pendingHopSave = true;
+    profilePendingHopSave[currentProfile] = true;
     // KO: 페어링만으로 바인딩 보장 X; 쓰기 성공 후 boundOK
     // EN: Pairing alone doesn't guarantee bind; boundOK after successful writes
   }
@@ -986,7 +1466,15 @@ void setup(){
   pcSig = {};
   pcSig.speed = 1;
 
+  // KO: 배터리 부팅 시 1회 측정
+  // EN: Measure battery once at boot
+  if(!usbSessionActive()){
+    vbat = readBattery();
+  }
+
   // KO: 초기 LED 표시 / EN: show initial LEDs
+  bootAnimStartMs = millis();
+  bootAnimDone = false;
   updateLEDs();
 }
 
@@ -997,6 +1485,15 @@ void setup(){
 void loop(){
   uint32_t now = millis();
 
+  // KO: USB 시리얼이 열릴 때 배너 1회 출력
+  // EN: Print banner once when USB serial opens
+  static bool lastUsbActive = false;
+  bool usbActive = usbSessionActive();
+  if(usbActive && !lastUsbActive){
+    printBanner();
+  }
+  lastUsbActive = usbActive;
+
 
   // ==========================================================================
   // KO: 물리 스틱 읽기 → stickSig
@@ -1005,7 +1502,7 @@ void loop(){
   int rawThr = analogRead(ADC_THROTTLE);
   int rawYaw = analogRead(ADC_YAW);
   int rawPit = analogRead(ADC_PITCH);
-  int rawRol = readMux(1);
+  int rawRol = readMux(0);
 
   uint8_t aThr = mapAxis(rawThr);
   uint8_t aYaw = mapAxis(rawYaw);
@@ -1036,6 +1533,7 @@ void loop(){
       pcHoldActive = false;
       pcOverride = false;
       aux1Until = 0;
+      aux1UserUntil = 0;
       gyroResetUntil = 0;
       killTriggered = true;
       killHoldActive = false;
@@ -1068,6 +1566,10 @@ void loop(){
   }
   lastSpd = spd;
   stickSig.speed = speedMode;
+  pcSig.speed = speedMode;
+  for(uint8_t i = 0; i < PROFILE_COUNT; i++){
+    amcStates[i].sig.speed = speedMode;
+  }
 
   // KO: 자동 이륙/착륙(GPIO11 짧은 클릭 → AUX1 펄스)
   // EN: auto takeoff/land (GPIO11 short press -> AUX1 pulse)
@@ -1094,19 +1596,62 @@ void loop(){
     }
   }
   lastAuto = a;
-  if(now < gyroResetUntil){
-    stickSig.aux1 = 2; // KO: 자이로 초기화 요청 / EN: gyro init request
-  } else {
-    stickSig.aux1 = (now < aux1Until) ? 1 : 0;
-  }
 
-  // KO: 헤드리스 토글(GPIO13, 스틱 전용)
-  // EN: headless toggle (GPIO13, stick only)
+  // KO: 사용자 버튼(GPIO12) - 짧게: LED, 길게: 서보
+  // EN: User button (GPIO12) - short: LED, long: servo
+  static bool lastUserBtn = false;
+  static uint32_t userPressedAt = 0;
+  static bool userLongFired = false;
+  bool ub = btn(BTN_LED_SERVO);
+  if(ub && !lastUserBtn){
+    userPressedAt = now;
+    userLongFired = false;
+  }
+  if(ub && !userLongFired && (now - userPressedAt >= USER_LONG_MS)){
+    userLongFired = true;
+    aux1UserValue = AUX1_SERVO_TOGGLE;
+    aux1UserUntil = now + AUX_PULSE;
+  }
+  if(!ub && lastUserBtn){
+    if(!userLongFired){
+      aux1UserValue = AUX1_LED_STEP;
+      aux1UserUntil = now + AUX_PULSE;
+    }
+  }
+  lastUserBtn = ub;
+
+  uint8_t aux1Cmd = 0;
+  if(now < gyroResetUntil){
+    aux1Cmd = AUX1_GYRO_RESET; // KO: 자이로 초기화 요청 / EN: gyro init request
+  } else if(now < aux1UserUntil){
+    aux1Cmd = aux1UserValue;
+  } else if(now < aux1Until){
+    aux1Cmd = AUX1_TAKEOFF;
+  }
+  stickSig.aux1 = aux1Cmd;
+
+  // KO: 헤드리스 토글(GPIO13) / 롱프레스(>=2초)=비상정지
+  // EN: headless toggle (GPIO13) / long press (>=2s)=emergency
   static bool lastHead = false;
+  static uint32_t headPressedAt = 0;
+  static bool headLongFired = false;
   bool h = btn(BTN_HEADLESS);
-  if(!lastHead && h){
-    headlessOn = !headlessOn;
-    pcSig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+  if(h && !lastHead){
+    headPressedAt = now;
+    headLongFired = false;
+  }
+  if(h && !headLongFired && (now - headPressedAt >= HEADLESS_LONG_MS)){
+    headLongFired = true;
+    applyEmergency();
+  }
+  if(!h && lastHead){
+    if(!headLongFired){
+      headlessOn = !headlessOn;
+      pcSig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+      for(uint8_t i = 0; i < PROFILE_COUNT; i++){
+        amcStates[i].sig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+      }
+    }
   }
   lastHead = h;
   stickSig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
@@ -1145,7 +1690,7 @@ void loop(){
                 (stickSig.pitch != STICK_CENTER) ||
                 (stickSig.yaw != STICK_CENTER) ||
                 (stickSig.throttle > STICK_THROTTLE_ACTIVE);
-  if(stickActive){
+  if(stickActive && !amcMode){
     pcOverride = false;
     pcHoldActive = false;
   }
@@ -1161,7 +1706,7 @@ void loop(){
 
   // KO: dd3 홀드가 pcHoldUntil까지 PC 오버라이드 유지
   // EN: dd3 hold keeps PC override alive until pcHoldUntil
-  if(pcHoldActive){
+  if(!amcMode && pcHoldActive){
     if(now < pcHoldUntil){
       lastPcMs = now; // KO: 유지(keep alive) / EN: keep alive
       pcOverride = true;
@@ -1173,15 +1718,8 @@ void loop(){
 
   // KO: PC 타임아웃 → 스틱으로 복귀(JOY 스트림용)
   // EN: PC timeout -> fall back to sticks (for streamed JOY mode)
-  if(pcOverride && (now - lastPcMs > PC_TIMEOUT_MS)){
+  if(!amcMode && pcOverride && (now - lastPcMs > PC_TIMEOUT_MS)){
     pcOverride = false;
-  }
-
-  // KO: 배터리 1초 주기 갱신
-  // EN: battery update every 1s
-  if(now - lastBatMs > 1000){
-    lastBatMs = now;
-    vbat = readBattery();
   }
 
   if(debugEnabled && (int32_t)(now - debugNextMs) >= 0){
@@ -1189,10 +1727,32 @@ void loop(){
     printDebugLine();
   }
 
-  // KO: 링크 설정(제어 전송과 동시에 백그라운드)
-  // EN: Link setup (background while still sending control)
-  if(!linkReady){
-    sendLinkSetup(now);
+  // KO: 전체 비상정지(AMC ON/OFF 모두)
+  // EN: global emergency (AMC on/off)
+  if(emergencyAll){
+    sendEmergencyAll(now);
+    emergencyAll = false;
+    emergencyPulse = false;
+    updateLEDs();
+    delay(20);
+    return;
+  }
+
+  if(amcMode){
+    for(uint8_t i = 0; i < PROFILE_COUNT; i++){
+      Signal s = buildAmcSignal(i, now);
+      // KO: AUX2 비트필드(bit0=headless, bit1=flow)
+      // EN: AUX2 bitfield (bit0=headless, bit1=flow)
+      s.aux2 = (s.aux2 & AUX2_HEADLESS) | (flowOn ? AUX2_FLOW : 0);
+      if(now < gyroResetUntil){
+        s.aux1 = AUX1_GYRO_RESET; // KO: 자이로 초기화 요청 / EN: gyro init request
+      }
+      sendSignalForProfile(i, s, now);
+    }
+    loadProfileRuntime(currentProfile, now);
+    updateLEDs();
+    delay(20);
+    return;
   }
 
   // ==========================================================================
@@ -1208,32 +1768,13 @@ void loop(){
   // EN: AUX2 bitfield (bit0=headless, bit1=flow)
   outSig.aux2 = (outSig.aux2 & AUX2_HEADLESS) | (flowOn ? AUX2_FLOW : 0);
   if(emergencyPulse){
-    outSig = {};
-    outSig.throttle = 0;
-    outSig.roll = 127;
-    outSig.pitch = 127;
-    outSig.yaw = 127;
-    outSig.aux1 = 0;
-    outSig.aux2 = 0;
-    outSig.speed = 1;
+    outSig = makeEmergencySignal();
   }
   if(!emergencyPulse && (now < gyroResetUntil)){
-    outSig.aux1 = 2; // KO: 자이로 초기화 요청 / EN: gyro init request
+    outSig.aux1 = AUX1_GYRO_RESET; // KO: 자이로 초기화 요청 / EN: gyro init request
   }
 
-  // KO: FHSS 채널 + 홉 인덱스 / EN: FHSS channel + hop index
-  fhssTxUpdate(now);
-  outSig.hop = hopIdx;
-
-  // KO: 전송 / EN: send
-  bool ok = radio.write(&outSig, sizeof(outSig));
-  if(ok){
-    boundOK = true;
-    if(pendingHopSave){
-      saveHopTableToEeprom();
-      pendingHopSave = false;
-    }
-  }
+  sendSignalForProfile(currentProfile, outSig, now);
 
   if(emergencyPulse) emergencyPulse = false;
 
