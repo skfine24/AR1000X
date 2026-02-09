@@ -1,4 +1,4 @@
-﻿/*
+/*
 KO: AR1000X 조종기 펌웨어 (RP2040)
 EN: AR1000X transmitter firmware (RP2040)
 
@@ -21,6 +21,11 @@ struct LinkPayload;
 #include <SPI.h>
 #include <RF24.h>
 #include <EEPROM.h>
+#include <Joystick.h> // KO: MHeironimus/ArduinoJoystick 라이브러리 필요 / EN: Requires MHeironimus/ArduinoJoystick library
+#include "AR1000X_COMMAND.h" // KO: 명령어 정의 헤더 포함 / EN: Include command definitions
+
+// KO: 조이스틱 설정 (8버튼, X/Y/Z/Rz 축)
+// EN: Joystick setup (8 buttons, X/Y/Z/Rz axes)
 
 // KO: USB 연결 여부(호스트가 시리얼을 열었을 때 true)
 // EN: USB session active (true when host opens serial)
@@ -193,6 +198,9 @@ static uint8_t currentProfile = 0; // KO: 기본 D1 / EN: default D1
 static bool amcMode = false;
 static bool emergencyAll = false;
 static const uint32_t HEADLESS_LONG_MS = 2000;
+static const uint32_t FLOW_LONG_MS = 2000;
+static const uint32_t FLIP_READY_TIMEOUT_MS = 3000;
+static const uint8_t  FLIP_DIR_DEADZONE = 40;
 
 static void printDebugLine();
 static bool runPairing();
@@ -204,15 +212,20 @@ static const uint8_t SCAN_MAX_CH = 80; // KO: 2480 MHz / EN: 2480 MHz
 static const uint8_t SCAN_SAMPLES = 4;
 
 static const char CTRL_NAME[8] = "AF1000X"; // KO: 8바이트, 널 문자 필요 없음 / EN: 8 bytes, no null required
-static const char CTRL_VERSION[4] = "00a";
+static const char CTRL_VERSION[4] = "00b";
 static const uint8_t LINK_FLAG_FACTORY_RESET = 0x01;
 static bool factoryResetReq = false;
 static const uint8_t AUX2_HEADLESS = 0x01;
 static const uint8_t AUX2_FLOW     = 0x02;
+static const uint8_t AUX2_FLIP_READY = 0x04;
 static const uint8_t AUX1_TAKEOFF = 1;
 static const uint8_t AUX1_GYRO_RESET = 2;
 static const uint8_t AUX1_SERVO_TOGGLE = 3;
 static const uint8_t AUX1_LED_STEP = 4;
+static const uint8_t AUX1_FLIP_ROLL_POS  = 5;
+static const uint8_t AUX1_FLIP_ROLL_NEG  = 6;
+static const uint8_t AUX1_FLIP_PITCH_POS = 7;
+static const uint8_t AUX1_FLIP_PITCH_NEG = 8;
 
 static const uint32_t EEPROM_MAGIC = 0xA0F1A0F1;
 static const uint32_t EEPROM_ADDR_MAGIC = 0xA0F1B0B1;
@@ -226,12 +239,16 @@ static uint32_t hopStartMs = 0;
 static uint8_t hopIdx = 0;
 static uint8_t hopIdxLast = 0xFF;
 
+// KO: 현재 시간에 해당하는 홉 인덱스 계산
+// EN: Calculate hop index for current time
 static inline uint8_t hopIndexForMs(uint32_t now){
   if(HOP_SLOT_MS == 0 || hopLen == 0) return 0;
   uint32_t slots = (now - hopStartMs) / HOP_SLOT_MS;
   return (uint8_t)((slots + hopSeed) % hopLen);
 }
 
+// KO: FHSS 채널 업데이트 (시간 기반)
+// EN: Update FHSS channel (time-based)
 static inline void fhssTxUpdate(uint32_t now){
   if(hopLen == 0){
     radio.setChannel(PAIR_CHANNEL);
@@ -262,6 +279,8 @@ struct AddrStore {
 
 static bool eepromReady = false;
 
+// KO: 홉 테이블 CRC 계산
+// EN: Calculate hop table CRC
 static inline uint8_t hopCrc(const uint8_t* t, uint8_t len){
   uint8_t c = 0x5A;
   for(uint8_t i = 0; i < len; i++){
@@ -270,6 +289,8 @@ static inline uint8_t hopCrc(const uint8_t* t, uint8_t len){
   return c;
 }
 
+// KO: EEPROM 초기화 (최초 1회)
+// EN: Initialize EEPROM (once)
 static bool eepromInit(){
   if(eepromReady) return true;
   EEPROM.begin(EEPROM_SIZE);
@@ -277,14 +298,20 @@ static bool eepromInit(){
   return true;
 }
 
+// KO: 프로파일별 홉 테이블 EEPROM 오프셋
+// EN: Hop table EEPROM offset per profile
 static inline int hopOffsetForProfile(uint8_t idx){
   return PROFILE_HOP_BASE + (int)idx * PROFILE_HOP_STRIDE;
 }
 
+// KO: 프로파일별 주소 EEPROM 오프셋
+// EN: Address EEPROM offset per profile
 static inline int addrOffsetForProfile(uint8_t idx){
   return PROFILE_ADDR_BASE + (int)idx * PROFILE_ADDR_STRIDE;
 }
 
+// KO: EEPROM에서 특정 프로파일의 홉 테이블 로드
+// EN: Load hop table for specific profile from EEPROM
 static bool loadHopTableFromEepromProfile(uint8_t idx, uint8_t* outTable, uint8_t &outLen){
   if(!eepromInit()) return false;
   HopStore s = {};
@@ -300,6 +327,8 @@ static bool loadHopTableFromEepromProfile(uint8_t idx, uint8_t* outTable, uint8_
   return true;
 }
 
+// KO: EEPROM에 특정 프로파일의 홉 테이블 저장
+// EN: Save hop table for specific profile to EEPROM
 static void saveHopTableToEepromProfile(uint8_t idx, const uint8_t* table, uint8_t len){
   if(!eepromInit()) return;
   HopStore s = {};
@@ -311,6 +340,8 @@ static void saveHopTableToEepromProfile(uint8_t idx, const uint8_t* table, uint8
   EEPROM.commit();
 }
 
+// KO: 주소 CRC 계산
+// EN: Calculate address CRC
 static inline uint8_t addrCrc(const uint8_t* a){
   uint8_t c = 0x3D;
   for(uint8_t i = 0; i < 5; i++){
@@ -319,6 +350,8 @@ static inline uint8_t addrCrc(const uint8_t* a){
   return c;
 }
 
+// KO: EEPROM에서 특정 프로파일의 TX 주소 로드
+// EN: Load TX address for specific profile from EEPROM
 static bool loadTxAddrFromEepromProfile(uint8_t idx, uint8_t* outAddr){
   if(!eepromInit()) return false;
   AddrStore s = {};
@@ -332,6 +365,8 @@ static bool loadTxAddrFromEepromProfile(uint8_t idx, uint8_t* outAddr){
   return true;
 }
 
+// KO: EEPROM에 특정 프로파일의 TX 주소 저장
+// EN: Save TX address for specific profile to EEPROM
 static void saveTxAddrToEepromProfile(uint8_t idx, const uint8_t* addr){
   if(!eepromInit()) return;
   AddrStore s = {};
@@ -375,6 +410,8 @@ static void saveTxAddrToEeprom(){
   saveTxAddrToEepromProfile(0, PIPE_ADDR_TX);
 }
 
+// KO: 현재 TX 주소 시리얼 출력
+// EN: Print current TX address to serial
 static void printTxAddr(){
   logPrint("ID ");
   for(uint8_t i = 0; i < 5; i++){
@@ -385,6 +422,8 @@ static void printTxAddr(){
   logPrintln();
 }
 
+// KO: 부팅 배너 출력
+// EN: Print boot banner
 static void printBanner(){
   logPrintln("SYUBEA Co., LTD");
   logPrintln("www.1510.co.kr");
@@ -394,6 +433,8 @@ static void printBanner(){
   printTxAddr();
 }
 
+// KO: 칩 ID 문자열을 64비트 정수로 변환
+// EN: Convert chip ID string to uint64
 static inline uint64_t chipIdToU64(uint64_t v){ return v; }
 static inline uint64_t chipIdToU64(const char* s){
   uint64_t v = 0;
@@ -410,6 +451,8 @@ static inline uint64_t chipIdToU64(const char* s){
   return v;
 }
 
+// KO: 고유 ID 기반 기본 주소 생성
+// EN: Generate base address from unique ID
 static void generateBaseAddr(uint8_t* outAddr){
 #if defined(ARDUINO_ARCH_RP2040)
   uint64_t chip = chipIdToU64(rp2040.getChipID());
@@ -433,10 +476,14 @@ static void generateBaseAddr(uint8_t* outAddr){
   }
 }
 
+// KO: 메인 TX 주소 생성
+// EN: Generate main TX address
 static void generateTxAddr(){
   generateBaseAddr(PIPE_ADDR_TX);
 }
 
+// KO: 프로파일별 고유 주소 생성 (믹싱)
+// EN: Generate unique address per profile (mixing)
 static void generateProfileAddr(uint8_t idx, uint8_t* outAddr){
   generateBaseAddr(outAddr);
   uint8_t mix = (uint8_t)((idx + 1) * 37);
@@ -452,12 +499,16 @@ static void generateProfileAddr(uint8_t idx, uint8_t* outAddr){
   }
 }
 
+// KO: TX 주소 초기화 (로드 실패 시 생성)
+// EN: Initialize TX address (generate if load fails)
 static void initTxAddr(){
   if(loadTxAddrFromEeprom()) return;
   generateTxAddr();
   saveTxAddrToEeprom();
 }
 
+// KO: 모든 프로파일(D1~D4) 초기화 및 로드
+// EN: Initialize and load all profiles (D1..D4)
 static void initProfiles(bool regenAll){
   // KO: 주소 로드/생성
   // EN: load or generate addresses
@@ -496,6 +547,8 @@ static void initProfiles(bool regenAll){
   }
 }
 
+// KO: 런타임에 특정 프로파일 활성화 (RF 설정)
+// EN: Activate specific profile at runtime (RF setup)
 static void loadProfileRuntime(uint8_t idx, uint32_t now){
   for(uint8_t i = 0; i < 5; i++) PIPE_ADDR_TX[i] = profiles[idx].addr[i];
   hopLen = profiles[idx].hopLen;
@@ -514,6 +567,8 @@ static void loadProfileRuntime(uint8_t idx, uint32_t now){
   pendingHopSave = profilePendingHopSave[idx];
 }
 
+// KO: 현재 런타임 상태를 프로파일에 저장
+// EN: Save current runtime state to profile
 static void saveProfileRuntime(uint8_t idx){
   profileHopSeed[idx] = hopSeed;
   profileHopStartMs[idx] = hopStartMs;
@@ -524,6 +579,8 @@ static void saveProfileRuntime(uint8_t idx){
   profilePendingHopSave[idx] = pendingHopSave;
 }
 
+// KO: 링크 페이로드 CRC 계산
+// EN: Calculate link payload CRC
 static inline uint8_t linkCrc(const LinkPayload &p){
   uint8_t c = 0x6A;
   for(uint8_t i = 0; i < 8; i++) c ^= (uint8_t)(p.name[i] + (i * 13));
@@ -534,6 +591,8 @@ static inline uint8_t linkCrc(const LinkPayload &p){
   return c;
 }
 
+// KO: 링크 페이로드 구성 (이름, 주소, 홉테이블)
+// EN: Build link payload (name, addr, hop table)
 static inline void buildLinkPayload(LinkPayload &p, const uint8_t* table, uint8_t len){
   for(uint8_t i = 0; i < 8; i++) p.name[i] = CTRL_NAME[i];
   for(uint8_t i = 0; i < 5; i++) p.addr[i] = PIPE_ADDR_TX[i];
@@ -543,6 +602,8 @@ static inline void buildLinkPayload(LinkPayload &p, const uint8_t* table, uint8_
   p.crc = linkCrc(p);
 }
 
+// KO: 주파수 스캔 및 최적 홉 테이블 생성
+// EN: Scan frequencies and build optimal hop table
 static void scanAndBuildHopTable(uint8_t* outTable, uint8_t &outLen){
   // KO: 전체 채널 RPD 간단 스캔 후 간섭이 적은 채널 선택
   // EN: Simple RPD scan across all channels; pick lowest-energy channels
@@ -579,6 +640,8 @@ static void scanAndBuildHopTable(uint8_t* outTable, uint8_t &outLen){
   }
 }
 
+// KO: 대기 중인 새 홉 테이블 적용
+// EN: Apply pending new hop table
 static void applyNextHopIfReady(uint32_t now){
   if(!nextHopValid) return;
   hopLen = nextHopLen;
@@ -590,6 +653,8 @@ static void applyNextHopIfReady(uint32_t now){
   hopIdxLast = 0xFF;
 }
 
+// KO: 링크 설정 패킷 전송 (페어링 채널)
+// EN: Send link setup packet (pairing channel)
 static bool sendLinkSetup(uint32_t now){
   if(now - lastLinkTxMs < 500) return false; // KO: 스로틀(백그라운드) / EN: throttle (background)
   lastLinkTxMs = now;
@@ -616,6 +681,8 @@ static bool sendLinkSetup(uint32_t now){
   return ok;
 }
 
+// KO: 특정 프로파일로 제어 신호 전송
+// EN: Send control signal to specific profile
 static bool sendSignalForProfile(uint8_t idx, const Signal &sig, uint32_t now){
   loadProfileRuntime(idx, now);
   if(!linkReady){
@@ -640,6 +707,8 @@ static bool sendSignalForProfile(uint8_t idx, const Signal &sig, uint32_t now){
   return ok;
 }
 
+// KO: 모든 프로파일에 비상 정지 신호 전송
+// EN: Send emergency signal to all profiles
 static void sendEmergencyAll(uint32_t now){
   uint8_t savedProfile = currentProfile;
   Signal e = makeEmergencySignal();
@@ -657,11 +726,12 @@ Signal tx;
 // ============================================================================
 uint8_t speedMode = 1;      // KO: 1~3 / EN: 1..3
 bool headlessOn = false;    // KO: AUX2 플래그 / EN: AUX2 flag
+static bool flipReady = false;
+static uint32_t flipReadyStartMs = 0;
 float vbat = 4.2f;          // KO: 루프에서 readBattery()로 갱신 / EN: updated in loop via readBattery()
 bool stickActive = false;   // KO: 물리 스틱이 활성일 때 true / EN: true when physical sticks are active
 
 
-static bool pcArmed = false;
 static bool pcOverride = false;
 static uint32_t lastPcMs = 0;
 static const uint32_t PC_TIMEOUT_MS = 200;
@@ -682,6 +752,27 @@ static uint32_t killHoldStart = 0;
 static bool flowOn = true;
 static bool debugEnabled = false;
 static uint32_t debugNextMs = 0;
+static bool vlrEnabled = false;
+
+// KO: 트림 오프셋(RAM만, 전원 사이클 시 리셋)
+// EN: Trim offsets (RAM only, reset on power cycle)
+int trimRoll = 0;
+int trimPitch = 0;
+
+// KO: AUX1 펄스(이륙/착륙 트리거)
+// EN: AUX1 pulse (takeoff/land trigger)
+uint32_t aux1Until = 0;
+uint32_t aux1UserUntil = 0;
+uint8_t aux1UserValue = 0;
+const uint32_t AUX_PULSE = 200;
+const uint32_t AUTO_LONG_MS = 2000;
+const uint32_t GYRO_RESET_PULSE_MS = 300;
+const uint32_t USER_LONG_MS = 1500;
+
+const uint32_t STICK_KILL_HOLD_MS = 2000;
+const uint8_t  STICK_KILL_LOW = 30;
+const uint8_t  STICK_KILL_HIGH = 225;
+uint32_t gyroResetUntil = 0;
 
 // KO: dd3 스타일 문자열 명령 홀드 상태
 // EN: dd3-style string command hold state
@@ -692,11 +783,34 @@ static uint16_t pcLastPower = 0;
 static uint16_t pcLastTimeMs = 0;
 
 
+// KO: 비상 정지 상태 적용 (플래그 설정)
+// EN: Apply emergency state (set flags)
 static void applyEmergency(){
+  flipReady = false;
   triggerEmergencyAll(millis());
 }
 
+// KO: AUX2 비트필드 구성 (헤드리스, 플로우 등)
+// EN: Build AUX2 bitfield (headless, flow, etc.)
+static inline uint8_t buildAux2(){
+  return (headlessOn ? AUX2_HEADLESS : 0) |
+         (flowOn ? AUX2_FLOW : 0) |
+         (flipReady ? AUX2_FLIP_READY : 0);
+}
 
+// KO: 모든 프로파일의 AUX2 상태 동기화
+// EN: Sync AUX2 state across all profiles
+static inline void syncAux2All(){
+  uint8_t aux2 = buildAux2();
+  pcSig.aux2 = aux2;
+  for(uint8_t i = 0; i < PROFILE_COUNT; i++){
+    amcStates[i].sig.aux2 = aux2;
+  }
+}
+
+
+// KO: 파워 값을 델타 값으로 변환
+// EN: Convert power value to delta
 static int powerToDelta(int p){
   // KO: dd3 power 범위 0..255(직접) / EN: dd3 power range 0..255 (direct)
   if(p < 0) p = -p;
@@ -706,6 +820,8 @@ static int powerToDelta(int p){
   return constrain(d, 0, 127);
 }
 
+// KO: 신호를 중립 상태로 설정
+// EN: Set signal to neutral state
 static void setNeutral(Signal &s, uint8_t thr){
   s.throttle = thr;
   s.roll = 127;
@@ -714,6 +830,8 @@ static void setNeutral(Signal &s, uint8_t thr){
   // KO: aux1/aux2는 명령이 바꾸지 않으면 유지 / EN: aux1/aux2 keep as-is unless command changes them
 }
 
+// KO: 비상 정지용 신호 생성
+// EN: Create emergency signal
 static Signal makeEmergencySignal(){
   Signal s = {};
   s.throttle = 0;
@@ -726,28 +844,33 @@ static Signal makeEmergencySignal(){
   return s;
 }
 
+// KO: AMC 상태 초기화
+// EN: Reset AMC state
 static void resetAmcState(uint8_t idx, uint8_t baseThr){
   setNeutral(amcStates[idx].sig, baseThr);
   amcStates[idx].sig.speed = speedMode;
   amcStates[idx].sig.aux1 = 0;
-  amcStates[idx].sig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+  amcStates[idx].sig.aux2 = buildAux2();
   amcStates[idx].holdActive = false;
   amcStates[idx].holdUntil = 0;
   amcStates[idx].holdNeutralThrottle = baseThr;
   amcStates[idx].aux1Until = 0;
 }
 
+// KO: 모든 AMC 상태 초기화
+// EN: Initialize all AMC states
 static void initAmcStates(uint8_t baseThr){
   for(uint8_t i = 0; i < PROFILE_COUNT; i++){
     resetAmcState(i, baseThr);
   }
 }
 
+// KO: 전체 비상 정지 트리거
+// EN: Trigger global emergency
 static void triggerEmergencyAll(uint32_t now){
   (void)now;
   emergencyAll = true;
   emergencyPulse = true;
-  pcArmed = false;
   pcOverride = false;
   pcHoldActive = false;
   pcSig = makeEmergencySignal();
@@ -757,6 +880,8 @@ static void triggerEmergencyAll(uint32_t now){
   }
 }
 
+// KO: PC 제어 홀드 시작 (단일)
+// EN: Start PC control hold (single)
 static void startHold(uint32_t now, uint32_t durMs){
   pcHoldActive = true;
   pcHoldUntil = now + durMs;
@@ -764,11 +889,15 @@ static void startHold(uint32_t now, uint32_t durMs){
   pcOverride = true;
 }
 
+// KO: AMC 제어 홀드 시작 (프로파일별)
+// EN: Start AMC control hold (per profile)
 static void amcStartHold(uint8_t idx, uint32_t now, uint32_t durMs){
   amcStates[idx].holdActive = true;
   amcStates[idx].holdUntil = now + durMs;
 }
 
+// KO: AMC 신호 생성 (홀드/펄스 처리)
+// EN: Build AMC signal (handle hold/pulse)
 static Signal buildAmcSignal(uint8_t idx, uint32_t now){
   AmcState &st = amcStates[idx];
   if(st.holdActive && (int32_t)(now - st.holdUntil) >= 0){
@@ -782,6 +911,8 @@ static Signal buildAmcSignal(uint8_t idx, uint32_t now){
   return s;
 }
 
+// KO: PC 시리얼 명령 처리
+// EN: Handle PC serial command
 static void handlePcLine(String s){
   s.trim();
   if(!s.length()) return;
@@ -809,9 +940,22 @@ static void handlePcLine(String s){
     }
   }
 
+  // KO: 도움말 출력
+  // EN: Print help
+  if(u == "HELP" || u == "?"){
+    logPrintln("=== AR1000X COMMANDS ===");
+    logPrintln(" [FLIGHT] START, TAKEOFF, LAND, STOP, EMERGENCY, HOVER");
+    logPrintln(" [MOVE] UP, DOWN, FORWARD, BACK, LEFT, RIGHT, CW, CCW <val> <ms>");
+    logPrintln(" [MODE] HEADLESS, FLOW ON/OFF, SPEED 1/2/3, AMC ON/OFF");
+    logPrintln(" [SETUP] BIND, GYRORESET, FLIP F/B/L/R");
+    logPrintln(" [INFO] BAT?, ID?, DBUG, VLR, VLROFF");
+    logPrintln(" [MULTI] Prefix D1~D4 (e.g. D1 TAKEOFF)");
+    return;
+  }
+
   // KO: AMC 멀티제어 모드
   // EN: AMC multi-control mode
-  if(u == "AMC" || u == "AMC ON" || u == "AMC 1"){
+  if(u == CMD_AMC || u == CMD_AMC " ON" || u == CMD_AMC " 1"){
     amcMode = true;
     initAmcStates(stickSig.throttle);
     pcOverride = false;
@@ -819,7 +963,7 @@ static void handlePcLine(String s){
     logPrintln("OK");
     return;
   }
-  if(u == "AMC OFF" || u == "AMC 0"){
+  if(u == CMD_AMC " OFF" || u == CMD_AMC " 0"){
     amcMode = false;
     pcOverride = false;
     pcHoldActive = false;
@@ -829,12 +973,12 @@ static void handlePcLine(String s){
 
   // KO: FLOW 토글(PC 시리얼)
   // EN: FLOW toggle (PC serial)
-  if(u == "FLOW ON" || u == "FLOW 1"){
+  if(u == CMD_FLOW " ON" || u == CMD_FLOW " 1"){
     flowOn = true;
     logPrintln("OK");
     return;
   }
-  if(u == "FLOW OFF" || u == "FLOW 0"){
+  if(u == CMD_FLOW " OFF" || u == CMD_FLOW " 0"){
     flowOn = false;
     logPrintln("OK");
     return;
@@ -842,7 +986,7 @@ static void handlePcLine(String s){
 
   // KO: 수동 바인딩(스캔 + 페어링 페이로드)
   // EN: Manual binding (scan + pairing payload)
-  if(u.startsWith("BIND") || u.startsWith("PAIR")){
+  if(u.startsWith(CMD_BIND) || u.startsWith(CMD_PAIR)){
     uint8_t bindTarget = targetProfile;
     int sp = u.indexOf(' ');
     if(sp > 0){
@@ -877,7 +1021,7 @@ static void handlePcLine(String s){
 
   // KO: 디버그 출력 토글(1초마다 출력)
   // EN: Debug output toggle (prints every 1s)
-  if(u == "DBUG"){
+  if(u == CMD_DBUG){
     debugEnabled = !debugEnabled;
     debugNextMs = millis() + 1000;
     logPrintln(debugEnabled ? "DBUG ON" : "DBUG OFF");
@@ -887,10 +1031,38 @@ static void handlePcLine(String s){
     return;
   }
 
+  // KO: 레버 값 출력 토글 (VLR / VLROFF)
+  // EN: Toggle lever value output
+  if(u == "VLR" || u == "VLR ON"){
+    vlrEnabled = true;
+    logPrintln("OK");
+    return;
+  }
+  if(u == "VLROFF" || u == "VLR OFF"){
+    vlrEnabled = false;
+    logPrintln("OK");
+    return;
+  }
+
+  // KO: 블록 코딩 연결 확인용
+  // EN: Block coding connection check
+  if(u == "SYUBEA1004"){
+    logPrintln("OK");
+    return;
+  }
+
   // KO: 조종기 ID 출력
   // EN: Print controller ID
-  if(u == "ID?" || u == "TXID?" || u == "ADDR?"){
-    printTxAddr();
+  if(u == CMD_ID "?" || u == CMD_TXID "?" || u == CMD_ADDR "?"){
+    for(uint8_t i = 0; i < PROFILE_COUNT; i++){
+      logPrint("D"); logPrint(i + 1); logPrint(" ID: ");
+      for(uint8_t j = 0; j < 5; j++){
+        if(j) logPrint("-");
+        if(profiles[i].addr[j] < 16) logPrint("0");
+        logPrint(profiles[i].addr[j], HEX);
+      }
+      logPrintln();
+    }
     return;
   }
 
@@ -898,7 +1070,7 @@ static void handlePcLine(String s){
   // KO: 즉시 안전 처리
   // EN: Immediate safety
   // ==========================================================================
-  if(u == "EMERGENCY"){
+  if(u == CMD_EMERGENCY){
     applyEmergency();
     pcHoldActive = false;
     // KO: 모든 드론에 즉시 비상정지 전송
@@ -913,32 +1085,16 @@ static void handlePcLine(String s){
     return;
   }
 
-  // ==========================================================================
-  // KO: PC 제어 ARM 게이팅 / EN: ARM gating for PC control
-  // ==========================================================================
-  if(u.startsWith("ARM ")){
-    int v = u.substring(4).toInt();
-    pcArmed = (v != 0);
-    if(!pcArmed){
-      pcOverride = false;
-      pcHoldActive = false;
-    }
-    logPrintln("OK");
-    return;
-  }
-
   // KO: 입력 소스 강제(옵션)
   // EN: Force source (optional)
-  if(u.startsWith("SRC ")){
+  if(u.startsWith(CMD_SRC " ")){
     String src = u.substring(4);
     src.trim();
     if(src == "PC"){
-      pcArmed = true;
       pcOverride = true;
       lastPcMs = millis();
     } else if(src == "STICK"){
       pcOverride = false;
-      pcArmed = false;
       pcHoldActive = false;
     }
     logPrintln("OK");
@@ -949,7 +1105,7 @@ static void handlePcLine(String s){
   // KO: 텔레메트리 조회
   // EN: Telemetry query
   // ==========================================================================
-  if(u == "BATTERY?" || u == "BATTERY" || u == "BAT?" || u == "BAT"){
+  if(u == CMD_BATTERY "?" || u == CMD_BATTERY || u == CMD_BAT "?" || u == CMD_BAT){
     logPrint("BAT ");
     logPrintln(vbat, 2);
     return;
@@ -959,7 +1115,7 @@ static void handlePcLine(String s){
   // KO: dd3 속도 N
   // EN: dd3 speed N
   // ==========================================================================
-  if(u.startsWith("SPEED ")){
+  if(u.startsWith(CMD_SPEED " ")){
     int sp = u.substring(6).toInt();
     sp = constrain(sp, 1, 3);
     speedMode = (uint8_t)sp;
@@ -971,12 +1127,18 @@ static void handlePcLine(String s){
     return;
   }
 
+  // KO: START 명령 (시동/ARM 활성화)
+  // EN: START command (Arming)
+  if(u == CMD_START){
+    logPrintln("OK");
+    return;
+  }
+
   // ==========================================================================
-  // KO: dd3 start/stop/takeoff/land/headless/gyroreset/funled
-  // EN: dd3 start/stop/takeoff/land/headless/gyroreset/funled
+  // KO: dd3 stop/takeoff/land/headless/gyroreset/funled
+  // EN: dd3 stop/takeoff/land/headless/gyroreset/funled
   // ==========================================================================
-  if(u == "TAKEOFF" || u == "LAND" || u == "START"){
-    if(!pcArmed){ logPrintln("IGN"); return; }
+  if(u == CMD_TAKEOFF || u == CMD_LAND || u == CMD_LANDING){
     if(amcMode){
       // KO: AMC는 타겟 프로파일에 AUX1 펄스
       // EN: AMC uses AUX1 pulse on target profile
@@ -984,7 +1146,7 @@ static void handlePcLine(String s){
       uint8_t baseThr = st.sig.throttle;
       st.holdNeutralThrottle = baseThr;
       st.sig.speed = speedMode;
-      st.sig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+      st.sig.aux2 = buildAux2();
       setNeutral(st.sig, baseThr);
       st.aux1Until = now + 180;
       st.holdActive = false;
@@ -992,7 +1154,7 @@ static void handlePcLine(String s){
       // KO: AUX1 펄스 사용(버튼 자동 이륙/착륙과 동일)
       // EN: Use AUX1 pulse (same behavior as button auto takeoff/land)
       pcSig.speed = speedMode;
-      pcSig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+      pcSig.aux2 = buildAux2();
       setNeutral(pcSig, stickSig.throttle);
       pcSig.aux1 = 1;
       startHold(millis(), 180); // KO: ~180ms 펄스 / EN: ~180ms pulse
@@ -1001,7 +1163,7 @@ static void handlePcLine(String s){
     return;
   }
 
-  if(u == "STOP"){
+  if(u == CMD_STOP){
     // KO: STOP을 비상 스로틀 컷으로 처리(더 안전)
     // EN: Treat STOP as emergency throttle-cut (safer)
     applyEmergency();
@@ -1011,29 +1173,27 @@ static void handlePcLine(String s){
     return;
   }
 
-  if(u == "HEADLESS"){
+  if(u == CMD_HEADLESS){
     headlessOn = !headlessOn;
-    pcSig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
-    for(uint8_t i = 0; i < PROFILE_COUNT; i++){
-      amcStates[i].sig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
-    }
+    flipReady = false;
+    syncAux2All();
     logPrintln("OK");
     return;
   }
 
-  if(u == "GYRORESET" || u == "GYRO_RESET"){
-    // KO: 이 프로토콜에 정의되지 않음; dd3 UI 유지를 위해 OK 응답
-    // EN: Not defined in this protocol; acknowledge to keep dd3 UI happy
+  if(u == CMD_GYRORESET || u == CMD_GYRO_RESET){
+    // KO: 자이로 초기화 트리거 / EN: Trigger gyro reset
+    gyroResetUntil = now + GYRO_RESET_PULSE_MS;
     logPrintln("OK");
     return;
   }
 
-  if(u == "FUNLED" || u == "FUN_LED"){
+  if(u == CMD_FUNLED || u == CMD_FUN_LED){
     logPrintln("OK");
     return;
   }
 
-  if(u == "HOVER"){
+  if(u == CMD_HOVER){
     if(amcMode){
       amcStates[targetProfile].holdActive = false;
       setNeutral(amcStates[targetProfile].sig, amcStates[targetProfile].holdNeutralThrottle);
@@ -1045,13 +1205,79 @@ static void handlePcLine(String s){
     return;
   }
 
+  // KO: FLIP 명령 (FLIP F/B/L/R)
+  // EN: FLIP command
+  if(u.startsWith(CMD_FLIP " ")){
+    String dirStr = u.substring(5);
+    dirStr.trim();
+    char d = dirStr.length() > 0 ? dirStr.charAt(0) : ' ';
+    
+    uint8_t flipCmd = 0;
+    if(d == 'F') flipCmd = AUX1_FLIP_PITCH_POS;      // 앞 (Forward)
+    else if(d == 'B') flipCmd = AUX1_FLIP_PITCH_NEG; // 뒤 (Back)
+    else if(d == 'L') flipCmd = AUX1_FLIP_ROLL_NEG;  // 좌 (Left)
+    else if(d == 'R') flipCmd = AUX1_FLIP_ROLL_POS;  // 우 (Right)
+    
+    if(flipCmd != 0){
+      if(amcMode){
+        // AMC 모드에서는 현재 지원하지 않음 (필요 시 추가 가능)
+      } else {
+        aux1UserValue = flipCmd;
+        aux1UserUntil = now + AUX_PULSE;
+      }
+      logPrintln("OK");
+    } else {
+      logPrintln("ERR");
+    }
+    return;
+  }
+
+  // KO: 다중 축 이동 명령 (MOVE t r p y time)
+  // EN: Multi-axis move command
+  if(u.startsWith(CMD_MOVE " ")){
+    int t, r, p, y, tms;
+    // Format: MOVE throttle roll pitch yaw time_ms
+    int n = sscanf(u.c_str(), "MOVE %d %d %d %d %d", &t, &r, &p, &y, &tms);
+    if(n == 5){
+      tms = constrain(tms, 20, 15000);
+      
+      if(amcMode){
+        AmcState &st = amcStates[targetProfile];
+        st.sig.throttle = (uint8_t)constrain(t, 0, 255);
+        st.sig.roll     = (uint8_t)constrain(r, 0, 255);
+        st.sig.pitch    = (uint8_t)constrain(p, 0, 255);
+        st.sig.yaw      = (uint8_t)constrain(y, 0, 255);
+        st.sig.speed    = speedMode;
+        st.sig.aux1     = 0;
+        st.sig.aux2     = buildAux2();
+        st.aux1Until    = 0;
+        st.holdNeutralThrottle = stickSig.throttle;
+        
+        amcStartHold(targetProfile, now, (uint32_t)tms);
+      } else {
+        pcSig.throttle = (uint8_t)constrain(t, 0, 255);
+        pcSig.roll     = (uint8_t)constrain(r, 0, 255);
+        pcSig.pitch    = (uint8_t)constrain(p, 0, 255);
+        pcSig.yaw      = (uint8_t)constrain(y, 0, 255);
+        pcSig.speed    = speedMode;
+        pcSig.aux1     = 0;
+        pcSig.aux2     = buildAux2();
+        
+        pcHoldNeutralThrottle = stickSig.throttle;
+        startHold(millis(), (uint32_t)tms);
+      }
+      logPrintln("OK");
+    } else {
+      logPrintln("ERR");
+    }
+    return;
+  }
+
   // ==========================================================================
   // KO: JOY 직접 입력(계속 지원)
   // EN: JOY direct (still supported)
   // ==========================================================================
-  if(u.startsWith("JOY ")){
-    if(!pcArmed){ logPrintln("IGN"); return; }
-
+  if(u.startsWith(CMD_JOY " ")){
     int t,r,p,y,a1,a2,spd;
     int n = sscanf(u.c_str(), "JOY %d %d %d %d %d %d %d", &t,&r,&p,&y,&a1,&a2,&spd);
     if(n == 7){
@@ -1105,12 +1331,18 @@ static void handlePcLine(String s){
       rest.trim();
       int sp2 = rest.indexOf(' ');
       if(sp2 > 0){
-        int pwr = rest.substring(0, sp2).toInt();
+        String pwrStr = rest.substring(0, sp2);
+        pwrStr.trim();
+        int pwr = 0;
+        if(pwrStr.endsWith("%")){
+          int pct = pwrStr.substring(0, pwrStr.length() - 1).toInt();
+          pwr = map(constrain(pct, 0, 100), 0, 100, 0, 255);
+        } else {
+          pwr = pwrStr.toInt();
+        }
         int tms = rest.substring(sp2 + 1).toInt();
         if(tms < 0) tms = -tms;
         tms = constrain(tms, 20, 15000);
-
-        if(!pcArmed){ logPrintln("IGN"); return; }
 
         int d = powerToDelta(pwr);
         pcLastPower = (uint16_t)pwr;
@@ -1124,28 +1356,36 @@ static void handlePcLine(String s){
           st.holdNeutralThrottle = baseThr;
           st.sig.speed = speedMode;
           st.sig.aux1 = 0;
-          st.sig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+          st.sig.aux2 = buildAux2();
           st.aux1Until = 0;
 
           // KO: 중립에서 시작 / EN: start from neutral
           setNeutral(st.sig, baseThr);
 
-          if(cmd == "UP"){
+          if(cmd == CMD_UP){
             st.sig.throttle = (uint8_t)constrain((int)baseThr + d, 0, 255);
-          } else if(cmd == "DOWN"){
+          } else if(cmd == CMD_DOWN){
             st.sig.throttle = (uint8_t)constrain((int)baseThr - d, 0, 255);
-          } else if(cmd == "FORWARD"){
+          } else if(cmd == CMD_FORWARD){
             st.sig.pitch = (uint8_t)constrain(127 + d, 0, 255);
-          } else if(cmd == "BACK"){
+          } else if(cmd == CMD_BACK){
             st.sig.pitch = (uint8_t)constrain(127 - d, 0, 255);
-          } else if(cmd == "RIGHT"){
+          } else if(cmd == CMD_RIGHT){
             st.sig.roll = (uint8_t)constrain(127 + d, 0, 255);
-          } else if(cmd == "LEFT"){
+          } else if(cmd == CMD_LEFT){
             st.sig.roll = (uint8_t)constrain(127 - d, 0, 255);
-          } else if(cmd == "CW"){
+          } else if(cmd == CMD_CW){
             st.sig.yaw = (uint8_t)constrain(127 + d, 0, 255);
-          } else if(cmd == "CCW"){
+          } else if(cmd == CMD_CCW || cmd == CMD_CC){
             st.sig.yaw = (uint8_t)constrain(127 - d, 0, 255);
+          } else if(cmd == CMD_SET_THROTTLE){
+            st.sig.throttle = (uint8_t)constrain(pwr, 0, 255);
+          } else if(cmd == CMD_SET_ROLL){
+            st.sig.roll = (uint8_t)constrain(pwr, 0, 255);
+          } else if(cmd == CMD_SET_PITCH){
+            st.sig.pitch = (uint8_t)constrain(pwr, 0, 255);
+          } else if(cmd == CMD_SET_YAW){
+            st.sig.yaw = (uint8_t)constrain(pwr, 0, 255);
           } else {
             logPrintln("ERR");
             return;
@@ -1159,27 +1399,35 @@ static void handlePcLine(String s){
 
           pcSig.speed = speedMode;
           pcSig.aux1 = 0;
-          pcSig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+          pcSig.aux2 = buildAux2();
 
           // KO: 중립에서 시작 / EN: start from neutral
           setNeutral(pcSig, baseThr);
 
-          if(cmd == "UP"){
+          if(cmd == CMD_UP){
             pcSig.throttle = (uint8_t)constrain((int)baseThr + d, 0, 255);
-          } else if(cmd == "DOWN"){
+          } else if(cmd == CMD_DOWN){
             pcSig.throttle = (uint8_t)constrain((int)baseThr - d, 0, 255);
-          } else if(cmd == "FORWARD"){
+          } else if(cmd == CMD_FORWARD){
             pcSig.pitch = (uint8_t)constrain(127 + d, 0, 255);
-          } else if(cmd == "BACK"){
+          } else if(cmd == CMD_BACK){
             pcSig.pitch = (uint8_t)constrain(127 - d, 0, 255);
-          } else if(cmd == "RIGHT"){
+          } else if(cmd == CMD_RIGHT){
             pcSig.roll = (uint8_t)constrain(127 + d, 0, 255);
-          } else if(cmd == "LEFT"){
+          } else if(cmd == CMD_LEFT){
             pcSig.roll = (uint8_t)constrain(127 - d, 0, 255);
-          } else if(cmd == "CW"){
+          } else if(cmd == CMD_CW){
             pcSig.yaw = (uint8_t)constrain(127 + d, 0, 255);
-          } else if(cmd == "CCW"){
+          } else if(cmd == CMD_CCW || cmd == CMD_CC){
             pcSig.yaw = (uint8_t)constrain(127 - d, 0, 255);
+          } else if(cmd == CMD_SET_THROTTLE){
+            pcSig.throttle = (uint8_t)constrain(pwr, 0, 255);
+          } else if(cmd == CMD_SET_ROLL){
+            pcSig.roll = (uint8_t)constrain(pwr, 0, 255);
+          } else if(cmd == CMD_SET_PITCH){
+            pcSig.pitch = (uint8_t)constrain(pwr, 0, 255);
+          } else if(cmd == CMD_SET_YAW){
+            pcSig.yaw = (uint8_t)constrain(pwr, 0, 255);
           } else {
             logPrintln("ERR");
             return;
@@ -1197,6 +1445,8 @@ static void handlePcLine(String s){
 }
 
 
+// KO: PC 시리얼 수신 폴링
+// EN: Poll PC serial input
 static void pollPcSerial(){
   while(Serial.available()){
     char c = (char)Serial.read();
@@ -1219,6 +1469,8 @@ static void pollPcSerial(){
 enum { MODE2 = 2, MODE1 = 1 };
 uint8_t controlMode = MODE2;
 
+// KO: 디버그 정보 출력
+// EN: Print debug info
 static void printDebugLine(){
   logPrint("DBG ");
   logPrint("T:"); logPrint((int)stickSig.throttle);
@@ -1237,36 +1489,20 @@ static void printDebugLine(){
 
 // KO: 배터리(TX 측) - 부팅 시 1회 측정
 // EN: Battery (TX side) - measure once at boot
-const float VBAT_LOW = 3.5f;   // KO: 필요 시 조정 / EN: adjust if needed
+const float VBAT_LOW = 3.2f;   // KO: 필요 시 조정 / EN: adjust if needed
 const uint8_t STICK_CENTER = 127;
 const uint8_t STICK_THROTTLE_ACTIVE = 15; // KO: 필요 시 조정 / EN: adjust if needed
-
-// KO: 트림 오프셋(RAM만, 전원 사이클 시 리셋)
-// EN: Trim offsets (RAM only, reset on power cycle)
-int trimRoll = 0;
-int trimPitch = 0;
-
-// KO: AUX1 펄스(이륙/착륙 트리거)
-// EN: AUX1 pulse (takeoff/land trigger)
-uint32_t aux1Until = 0;
-uint32_t aux1UserUntil = 0;
-uint8_t aux1UserValue = 0;
-const uint32_t AUX_PULSE = 200;
-const uint32_t AUTO_LONG_MS = 2000;
-const uint32_t GYRO_RESET_PULSE_MS = 300;
-const uint32_t USER_LONG_MS = 1500;
-
-const uint32_t STICK_KILL_HOLD_MS = 2000;
-const uint8_t  STICK_KILL_LOW = 30;
-const uint8_t  STICK_KILL_HIGH = 225;
-uint32_t gyroResetUntil = 0;
 
 // ============================================================================
 // KO: 헬퍼
 // EN: Helpers
 // ============================================================================
+// KO: 버튼 상태 읽기 (Active LOW)
+// EN: Read button state (Active LOW)
 static inline bool btn(int p){ return digitalRead(p) == LOW; }
 
+// KO: MUX 채널 읽기
+// EN: Read MUX channel
 static inline int readMux(uint8_t ch){
   digitalWrite(MUX_S0, bitRead(ch,0));
   if(MUX_S1 >= 0) digitalWrite(MUX_S1, bitRead(ch,1));
@@ -1275,12 +1511,16 @@ static inline int readMux(uint8_t ch){
   return analogRead(MUX_ADC);
 }
 
+// KO: ADC 값을 0~255 범위로 매핑 (중앙 데드존 적용)
+// EN: Map ADC value to 0~255 (with center deadzone)
 static inline uint8_t mapAxis(int v){
   int m = map(v, 0, 4095, 0, 255);
   if(m > 120 && m < 135) return 127; // KO: 중앙 데드존 / EN: deadzone around center
   return (uint8_t)constrain(m, 0, 255);
 }
 
+// KO: 배터리 전압 측정
+// EN: Measure battery voltage
 static inline float readBattery(){
   // KO: MUX ch1 배터리 입력(1/2 분압 가정)
   // EN: Battery via mux ch1, divider 1/2 assumed
@@ -1294,6 +1534,8 @@ static inline float readBattery(){
 // ============================================================================
 // KO: 페어링 / EN: Pairing
 // ============================================================================
+// KO: 페어링 프로세스 실행
+// EN: Run pairing process
 static bool runPairing(){
   radio.stopListening();
   radio.setChannel(PAIR_CHANNEL);
@@ -1331,6 +1573,8 @@ static bool runPairing(){
 // KO: LED 처리
 // EN: LED handling
 // ============================================================================
+// KO: LED 상태 업데이트
+// EN: Update LED states
 static void updateLEDs(){
   uint32_t t = millis();
 
@@ -1351,21 +1595,32 @@ static void updateLEDs(){
 
   // KO: LED1 = 전원/바인딩/배터리 / EN: LED1 = power/bind/battery
   if(vbat < VBAT_LOW){
-    digitalWrite(LED1_POWER, (t/250)%2);   // KO: 0.5초 점멸 / EN: 0.5s blink
+    // KO: 배터리 부족 -> 3번 깜박임 (2초 주기)
+    // EN: Low battery -> 3 blinks (2s cycle)
+    uint32_t cycle = t % 2000;
+    bool on = (cycle < 200) || (cycle > 400 && cycle < 600) || (cycle > 800 && cycle < 1000);
+    digitalWrite(LED1_POWER, on ? HIGH : LOW);
     digitalWrite(LED2_HEADLESS, LOW);
     digitalWrite(LED3_TRIM, LOW);
     return;
   }
   if(boundOK){
-    digitalWrite(LED1_POWER, HIGH);        // KO: 바인딩 이후 LED1 고정 ON / EN: solid ON after binding
+    // KO: 연결 완료 -> LED1 2번 깜박임 (2초 주기)
+    // EN: Connected -> LED1 2 blinks (2s cycle)
+    uint32_t cycle = t % 2000;
+    bool on = (cycle < 200) || (cycle > 400 && cycle < 600);
+    digitalWrite(LED1_POWER, on ? HIGH : LOW);
   } else {
-    // KO: 미연결 상태는 1초 점멸 / EN: not bound -> 1s blink
-    digitalWrite(LED1_POWER, (t/500)%2);
+    // KO: 미연결 -> LED1 켜짐 (전원 표시)
+    // EN: Not bound -> LED1 ON (Power)
+    digitalWrite(LED1_POWER, HIGH);
   }
 
-  // KO: LED2 = 헤드리스
-  // EN: LED2 = headless
-  if(headlessOn){
+  // KO: LED2 = 플립 준비 > 헤드리스
+  // EN: LED2 = flip ready > headless
+  if(flipReady){
+    digitalWrite(LED2_HEADLESS, (t/500)%2); // KO: 0.5초 점멸 / EN: 0.5s blink
+  } else if(headlessOn){
     digitalWrite(LED2_HEADLESS, HIGH); // KO: 헤드리스 ON = 고정 점등 / EN: headless ON = solid ON
   } else {
     digitalWrite(LED2_HEADLESS, LOW);
@@ -1373,18 +1628,27 @@ static void updateLEDs(){
 
   // KO: LED3 = AMC 모드(1초 점멸) > 트림 모드(고정 점등)
   // EN: LED3 = AMC mode (1s blink) > trim mode (solid ON)
-  if(amcMode){
-    digitalWrite(LED3_TRIM, (t/1000)%2); // KO: 1초 ON / 1초 OFF / EN: 1s ON / 1s OFF
-  } else if(trimMode){
-    digitalWrite(LED3_TRIM, HIGH);     // KO: 트림 모드 ON = 고정 점등 / EN: trim mode ON = solid ON
+  if(boundOK){
+    if(amcMode){
+      digitalWrite(LED3_TRIM, (t/1000)%2); // KO: 1초 ON / 1초 OFF / EN: 1s ON / 1s OFF
+    } else if(trimMode){
+      digitalWrite(LED3_TRIM, HIGH);     // KO: 트림 모드 ON = 고정 점등 / EN: trim mode ON = solid ON
+    } else {
+      digitalWrite(LED3_TRIM, LOW);
+    }
   } else {
-    digitalWrite(LED3_TRIM, LOW);
+    // KO: 미연결 -> LED3 2초 ON / 1초 OFF
+    // EN: Not bound -> LED3 2s ON / 1s OFF
+    uint32_t cycle = t % 3000;
+    digitalWrite(LED3_TRIM, (cycle < 2000) ? HIGH : LOW);
   }
 }
 
 // ============================================================================
 // KO: 셋업 / EN: Setup
 // ============================================================================
+// KO: 초기화 설정
+// EN: Setup initialization
 void setup(){
   // KO: USB 시리얼(CDC) / EN: Serial over USB (CDC)
   Serial.begin(115200);  // KO: USB 디스크립터 설정 / EN: set USB descriptors
@@ -1403,6 +1667,15 @@ void setup(){
   USB.connect();
   delay(50);
 #endif
+
+  // KO: ADC 해상도를 12비트(0~4095)로 설정 (RP2040 기본은 10비트)
+  // EN: Set ADC resolution to 12-bit (0~4095)
+  analogReadResolution(12);
+
+  // KO: 조이스틱 초기화 (범위 0~255)
+  // EN: Initialize Joystick (range 0~255)
+  Joystick.begin();
+
   pinMode(MUX_S0, OUTPUT);
   if(MUX_S1 >= 0) pinMode(MUX_S1, OUTPUT);
   if(MUX_S2 >= 0) pinMode(MUX_S2, OUTPUT);
@@ -1482,6 +1755,8 @@ void setup(){
 // KO: 루프
 // EN: Loop
 // ============================================================================
+// KO: 메인 루프
+// EN: Main loop
 void loop(){
   uint32_t now = millis();
 
@@ -1620,18 +1895,8 @@ void loop(){
   }
   lastUserBtn = ub;
 
-  uint8_t aux1Cmd = 0;
-  if(now < gyroResetUntil){
-    aux1Cmd = AUX1_GYRO_RESET; // KO: 자이로 초기화 요청 / EN: gyro init request
-  } else if(now < aux1UserUntil){
-    aux1Cmd = aux1UserValue;
-  } else if(now < aux1Until){
-    aux1Cmd = AUX1_TAKEOFF;
-  }
-  stickSig.aux1 = aux1Cmd;
-
-  // KO: 헤드리스 토글(GPIO13) / 롱프레스(>=2초)=비상정지
-  // EN: headless toggle (GPIO13) / long press (>=2s)=emergency
+  // KO: 플립/헤드리스 (GPIO13) - 짧게: 플립 준비, 길게: 헤드리스 토글
+  // EN: flip/headless (GPIO13) - short: flip ready, long: headless toggle
   static bool lastHead = false;
   static uint32_t headPressedAt = 0;
   static bool headLongFired = false;
@@ -1642,28 +1907,81 @@ void loop(){
   }
   if(h && !headLongFired && (now - headPressedAt >= HEADLESS_LONG_MS)){
     headLongFired = true;
-    applyEmergency();
+    headlessOn = !headlessOn;
+    flipReady = false;
+    syncAux2All();
   }
   if(!h && lastHead){
     if(!headLongFired){
-      headlessOn = !headlessOn;
-      pcSig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
-      for(uint8_t i = 0; i < PROFILE_COUNT; i++){
-        amcStates[i].sig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
+      if(headlessOn){
+        flipReady = false;
+      } else if(flipReady){
+        flipReady = false;
+      } else {
+        flipReady = true;
+        flipReadyStartMs = now;
       }
+      syncAux2All();
     }
   }
   lastHead = h;
-  stickSig.aux2 = headlessOn ? AUX2_HEADLESS : 0;
 
-  // KO: 옵티컬 플로우 토글(GPIO10)
-  // EN: Optical flow toggle (GPIO10)
+  // KO: 옵티컬 플로우/비상정지 (GPIO10) - 짧게: Flow 토글, 길게: 긴급정지
+  // EN: flow/emergency (GPIO10) - short: flow toggle, long: emergency
   static bool lastFlow = false;
+  static uint32_t flowPressedAt = 0;
+  static bool flowLongFired = false;
   bool f = btn(BTN_FLOW_TOGGLE);
-  if(!lastFlow && f){
-    flowOn = !flowOn;
+  if(f && !lastFlow){
+    flowPressedAt = now;
+    flowLongFired = false;
+  }
+  if(f && !flowLongFired && (now - flowPressedAt >= FLOW_LONG_MS)){
+    flowLongFired = true;
+    applyEmergency();
+  }
+  if(!f && lastFlow){
+    if(!flowLongFired){
+      flowOn = !flowOn;
+      syncAux2All();
+    }
   }
   lastFlow = f;
+
+  // KO: 플립 준비 상태 처리 (3초 타임아웃)
+  // EN: flip ready handling (3s timeout)
+  if(flipReady){
+    if(now - flipReadyStartMs >= FLIP_READY_TIMEOUT_MS){
+      flipReady = false;
+    } else {
+      int dRoll = (int)stickSig.roll - STICK_CENTER;
+      int dPitch = (int)stickSig.pitch - STICK_CENTER;
+      int absR = abs(dRoll);
+      int absP = abs(dPitch);
+      if(absR > FLIP_DIR_DEADZONE || absP > FLIP_DIR_DEADZONE){
+        if(absR >= absP){
+          aux1UserValue = dRoll > 0 ? AUX1_FLIP_ROLL_POS : AUX1_FLIP_ROLL_NEG;
+        } else {
+          aux1UserValue = dPitch > 0 ? AUX1_FLIP_PITCH_POS : AUX1_FLIP_PITCH_NEG;
+        }
+        aux1UserUntil = now + AUX_PULSE;
+        flipReady = false;
+      }
+    }
+  }
+
+  stickSig.aux2 = buildAux2();
+  syncAux2All();
+
+  uint8_t aux1Cmd = 0;
+  if(now < gyroResetUntil){
+    aux1Cmd = AUX1_GYRO_RESET; // KO: 자이로 초기화 요청 / EN: gyro init request
+  } else if(now < aux1UserUntil){
+    aux1Cmd = aux1UserValue;
+  } else if(now < aux1Until){
+    aux1Cmd = AUX1_TAKEOFF;
+  }
+  stickSig.aux1 = aux1Cmd;
 
   // KO: 트림 모드 토글(GPIO14 짧은 클릭)
   // EN: trim mode toggle (GPIO14 short press)
@@ -1686,19 +2004,58 @@ void loop(){
 
   // KO: 스틱 입력 감지(트림 적용 전)
   // EN: detect stick activity (before trim offsets)
-  stickActive = (stickSig.roll != STICK_CENTER) ||
-                (stickSig.pitch != STICK_CENTER) ||
-                (stickSig.yaw != STICK_CENTER) ||
-                (stickSig.throttle > STICK_THROTTLE_ACTIVE);
+  // KO: 물리적 오차를 고려하여 120~130 범위를 중립(비활성)으로 처리
+  // EN: Treat 120~130 range as neutral (inactive) considering physical errors
+  bool rollActive  = (stickSig.roll < 120 || stickSig.roll > 130);
+  bool pitchActive = (stickSig.pitch < 120 || stickSig.pitch > 130);
+  bool yawActive   = (stickSig.yaw < 120 || stickSig.yaw > 130);
+  
+  // KO: 스로틀이 0(최하단)이거나 중립 범위(120~130)이면 비활성으로 간주
+  bool throttleActive = (stickSig.throttle > STICK_THROTTLE_ACTIVE) && (stickSig.throttle < 120 || stickSig.throttle > 130);
+  
+  stickActive = rollActive || pitchActive || yawActive || throttleActive;
   if(stickActive && !amcMode){
     pcOverride = false;
     pcHoldActive = false;
+  }
+
+  // KO: 스틱 값 실시간 디버깅 출력 (200ms 간격)
+  // EN: Real-time stick value debug output (200ms interval)
+  static uint32_t stickDebugMs = 0;
+  if(vlrEnabled && (now - stickDebugMs > 200)){
+    stickDebugMs = now;
+    logPrint("STK T:"); logPrint((int)stickSig.throttle);
+    logPrint(" Y:"); logPrint((int)stickSig.yaw);
+    logPrint(" P:"); logPrint((int)stickSig.pitch);
+    logPrint(" R:"); logPrint((int)stickSig.roll);
+    logPrint(" ACT:"); logPrint(stickActive);
+    logPrint(" B:");
+    logPrint((int)btn(BTN_AUTO)); logPrint(" ");
+    logPrint((int)btn(BTN_HEADLESS)); logPrint(" ");
+    logPrint((int)btn(BTN_FLOW_TOGGLE)); logPrint(" ");
+    logPrint((int)btn(BTN_LED_SERVO)); logPrint(" ");
+    logPrint((int)btn(BTN_TRIM_MODE)); logPrint(" ");
+    logPrintln((int)btn(BTN_PAIR_SPEED));
   }
 
   // KO: 스틱 제어 경로에만 트림 오프셋 적용
   // EN: apply trim offsets only to stick control path
   stickSig.roll  = (uint8_t)constrain((int)stickSig.roll  + trimRoll,  0, 255);
   stickSig.pitch = (uint8_t)constrain((int)stickSig.pitch + trimPitch, 0, 255);
+
+  // KO: 조이스틱 상태 업데이트
+  // EN: Update Joystick state
+  // KO: RP2040 내장 라이브러리는 -127~127 범위를 사용하므로 변환
+  Joystick.X(map(stickSig.roll, 0, 255, -127, 127));
+  Joystick.Y(map(stickSig.pitch, 0, 255, -127, 127));
+  Joystick.Z(map(stickSig.throttle, 0, 255, -127, 127));
+  Joystick.Zrotate(map(stickSig.yaw, 0, 255, -127, 127));
+  Joystick.button(1, btn(BTN_AUTO));      // RP2040 Lib: Button 1~32
+  Joystick.button(2, btn(BTN_HEADLESS));
+  Joystick.button(3, btn(BTN_FLOW_TOGGLE));
+  Joystick.button(4, btn(BTN_LED_SERVO));
+  Joystick.button(5, btn(BTN_TRIM_MODE));
+  Joystick.button(6, btn(BTN_PAIR_SPEED));
 
   // KO: PC 시리얼 폴링
   // EN: PC serial poll
@@ -1741,9 +2098,9 @@ void loop(){
   if(amcMode){
     for(uint8_t i = 0; i < PROFILE_COUNT; i++){
       Signal s = buildAmcSignal(i, now);
-      // KO: AUX2 비트필드(bit0=headless, bit1=flow)
-      // EN: AUX2 bitfield (bit0=headless, bit1=flow)
-      s.aux2 = (s.aux2 & AUX2_HEADLESS) | (flowOn ? AUX2_FLOW : 0);
+      // KO: AUX2 비트필드(bit0=headless, bit1=flow, bit2=flip ready)
+      // EN: AUX2 bitfield (bit0=headless, bit1=flow, bit2=flip ready)
+      s.aux2 = buildAux2();
       if(now < gyroResetUntil){
         s.aux1 = AUX1_GYRO_RESET; // KO: 자이로 초기화 요청 / EN: gyro init request
       }
@@ -1764,9 +2121,9 @@ void loop(){
   } else {
     outSig = stickSig;
   }
-  // KO: AUX2 비트필드(bit0=headless, bit1=flow)
-  // EN: AUX2 bitfield (bit0=headless, bit1=flow)
-  outSig.aux2 = (outSig.aux2 & AUX2_HEADLESS) | (flowOn ? AUX2_FLOW : 0);
+  // KO: AUX2 비트필드(bit0=headless, bit1=flow, bit2=flip ready)
+  // EN: AUX2 bitfield (bit0=headless, bit1=flow, bit2=flip ready)
+  outSig.aux2 = buildAux2();
   if(emergencyPulse){
     outSig = makeEmergencySignal();
   }
